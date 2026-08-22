@@ -37,13 +37,29 @@ def register():
         print('BB Kitsu Pipeline: %s' % core.error)
 
 
+def _teardown(step):
+    """Run one unregister step, reporting rather than aborting the rest.
+
+    Unregistering is not all-or-nothing here: ``menu`` puts Blender's own top
+    bar draw method back, and it is unregistered late. If an earlier step
+    raises, that restore never happens and the top bar keeps calling into a
+    module that is on its way out - a broken UI that survives until Blender
+    restarts. Every step is worth attempting even when a previous one failed.
+    """
+    try:
+        step()
+    except Exception as error:                      # noqa: BLE001
+        print('BB Kitsu Pipeline: %s.%s failed on unregister (%s)'
+              % (getattr(step, '__module__', '?'),
+                 getattr(step, '__name__', '?'), error))
+
+
 def unregister():
-    autoconnect.unregister()
-    render.unregister()
-    handlers.unregister()
-    session.unregister_timer()
+    for step in (autoconnect.unregister, render.unregister,
+                 handlers.unregister, session.unregister_timer):
+        _teardown(step)
 
     for module in reversed(_modules):
-        module.unregister()
+        _teardown(module.unregister)
 
     session.state.reset()

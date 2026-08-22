@@ -616,7 +616,7 @@ def main():
     nodes_menu = nuke.menu("Nodes").menus.get(package.MENU)
     check(nodes_menu is not None,
           "the node is registered in the Nodes menu, which is what Tab searches")
-    check(any(name == "Kitsu Write" for name, _c, _s in nodes_menu.commands),
+    check(any(name == "Write Kitsu" for name, _c, _s in nodes_menu.commands),
           "under a findable name (%s)"
           % [n for n, _c, _s in (nodes_menu.commands if nodes_menu else [])])
 

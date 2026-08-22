@@ -61,7 +61,7 @@ def install_menu():
             kitsu_nodes.removeItem(item.name())
         except Exception:
             pass
-    kitsu_nodes.addCommand('Kitsu Write', _run('create_write()'), 'ctrl+alt+w')
+    kitsu_nodes.addCommand('Write Kitsu', _run('create_write()'), 'ctrl+alt+w')
 
     # Printed so it is possible to tell which build Nuke actually loaded -
     # Nuke caches imported modules, so an unrestarted session runs old code
