@@ -360,6 +360,7 @@ there is nothing to type.
 |---|---|
 | **Browser…** | project ▸ sequence ▸ shot ▸ task ▸ version, with the shot's Kitsu thumbnail |
 | **Import into Current Script** | paste another version's nodes into the open comp |
+| **Create Write Node** | a Write pointed at this version's render path |
 | **Save Next Version** | version up the open script |
 | **Update Kitsu…** | comment, status and a snapshot for the script already open |
 
@@ -371,7 +372,35 @@ Creating a version sets the script's **frame range and fps** from Kitsu. The
 format is deliberately left alone: a comp's format usually comes from its
 plate, so writing one in would override a decision the artist made on purpose.
 
-Publishing can attach a **snapshot**, which is how a comp gets a thumbnail in
+### The Kitsu Write node
+
+`Kitsu ▸ Create Write Node` makes an **ordinary Nuke Write** with a Kitsu tab
+added — not a gizmo wrapping one, so every native setting stays where a comper
+expects it. A Write whose usual controls are out of reach just gets replaced
+with a normal Write, and then the pipeline loses track of the render entirely.
+
+The tab adds the three things a Write cannot do for itself:
+
+| | |
+|---|---|
+| **Set Output Path** | re-derive the path from the script's version |
+| **Add Read Node** | read back exactly what was rendered, over its real frame range |
+| **Publish to Kitsu** | convert the render and upload it |
+
+The output path is never typed in — it comes from the same context that named
+the script, so a render cannot be filed under a version that did not produce
+it. The buttons are PyScript knobs, saved inside the `.nk`, so they still work
+in a script somebody else opens.
+
+**Publish builds an H.264 `.mp4`.** "QuickTime" is what everyone calls the
+review movie, but the container is the deliberate part: uploads go up with
+`normalize=false` so Kitsu keeps exactly the bytes it is given, which means the
+file has to be one a browser plays unaided. H.264 in `.mp4` is that everywhere;
+the same stream in a `.mov` is not — Safari plays it, Chrome frequently will
+not. The movie is built in Nuke, so the frames go through Nuke's own colour
+management on the way.
+
+Publishing a save can attach a **snapshot**, which is how a comp gets a thumbnail in
 Kitsu at all. Nuke has no viewport to grab, so it is a real one-frame render
 through a temporary Write node — of the selected node, or of whatever the
 Viewer is looking at. It is written through sRGB, because a linear comp handed

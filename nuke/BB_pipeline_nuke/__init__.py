@@ -46,6 +46,7 @@ def install_menu():
 
     menu.addCommand('Browser...', _run('open_browser()'), 'ctrl+alt+b')
     menu.addSeparator()
+    menu.addCommand('Create Write Node', _run('create_write()'), 'ctrl+alt+w')
     menu.addCommand('Save Next Version', _run('save_next_version()'), 'ctrl+alt+s')
     menu.addCommand('Update Kitsu...', _run('update_kitsu()'))
     menu.addSeparator()
@@ -86,6 +87,49 @@ def save_next_version():
     nuke.tprint('[Kitsu] saved %s' % path)
     browser.ask_to_publish(path)
     return path
+
+
+def create_write():
+    """A Write pointed at this version's render path, with a Kitsu tab."""
+    import nuke
+
+    from . import writenode
+
+    try:
+        node = writenode.create()
+    except writenode.WriteError as error:
+        nuke.message(str(error))
+        return None
+
+    nuke.tprint('[BB] %s -> %s' % (node.name(), node.knob('file').value()))
+    return node
+
+
+# -- what the buttons on a Kitsu Write call ----------------------------------
+
+def write_set_path(node):
+    from . import writenode
+    return writenode.set_output_path(node)
+
+
+def write_add_read(node):
+    from . import writenode
+    return writenode.add_read(node)
+
+
+def write_publish(node):
+    """Build a review movie from what this Write rendered, and send it."""
+    import nuke
+
+    from . import browser, review
+
+    path = node.knob('file').evaluate() or node.knob('file').value()
+    found = review.rendered_frames(path)
+    if not found:
+        nuke.message('Nothing rendered there yet:' + chr(10) + chr(10) + str(path))
+        return ''
+
+    return browser.ask_to_publish_render(node, len(found))
 
 
 def update_kitsu():

@@ -13,7 +13,8 @@ import os
 from BB_core import credentials, settings
 from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
 
-from . import capture, fetch, publish, scripts, session, stamp, thumbnails
+from . import (capture, fetch, publish, review, scripts, session, stamp,
+               thumbnails)
 
 state = session.state
 
@@ -387,6 +388,70 @@ def ask_to_publish(path):
         nuke.message('The comment was posted, but no thumbnail.'
                      + chr(10) + chr(10) + problem)
     state.say(note)
+
+
+def ask_to_publish_render(node, frame_count):
+    """Comment and status for a rendered version, then build and upload.
+
+    Separate from the save dialog because what is being sent is different: a
+    movie built from frames on disk, not a snapshot of the Viewer, and the
+    build can take a while on a long shot.
+    """
+    entity_context, _source = stamp.read_current()
+    blocked = publish.why_not(entity_context)
+    if blocked:
+        import nuke
+        nuke.message(blocked)
+        return ''
+
+    QtCore, QtWidgets = _qt()
+
+    dialog = QtWidgets.QDialog(_parent())
+    dialog.setWindowTitle('Publish Render to Kitsu')
+    dialog.setMinimumWidth(440)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.addWidget(QtWidgets.QLabel(entity_context.versioned()))
+
+    note = QtWidgets.QLabel(
+        '%d frame(s) will be converted to H.264 for Kitsu.' % frame_count)
+    note.setWordWrap(True)
+    layout.addWidget(note)
+
+    comment = QtWidgets.QPlainTextEdit('%s rendered from Nuke'
+                                       % entity_context.versioned())
+    comment.setMaximumHeight(90)
+    layout.addWidget(comment)
+
+    status = QtWidgets.QComboBox()
+    status.addItem('Leave unchanged', None)
+    for row in state.statuses:
+        status.addItem(row.get('name', '?'), row['id'])
+    form = QtWidgets.QFormLayout()
+    form.addRow('Status', status)
+    layout.addLayout(form)
+
+    box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    layout.addWidget(box)
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return ''
+
+    QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+    try:
+        result = review.submit(node, comment=comment.toPlainText(),
+                               task_status_id=status.currentData())
+    finally:
+        QtWidgets.QApplication.restoreOverrideCursor()
+
+    if result and 'updated' not in result.lower():
+        import nuke
+        nuke.message(result)
+    state.say(result)
+    return result
 
 
 # -- settings ----------------------------------------------------------------

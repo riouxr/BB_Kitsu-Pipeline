@@ -55,6 +55,9 @@ class StubKnob:
     def setFlag(self, flag):
         self.flags.append(flag)
 
+    def evaluate(self):
+        return self._value
+
 
 class StubRoot:
     def __init__(self):
@@ -117,17 +120,49 @@ def make_stub():
         def __init__(self, name="Node1", **knobs):
             self._name = name
             self.knobs = dict(knobs)
+            self._objects = {}
 
         def name(self):
             return self._name
 
+        def setName(self, name, uncollide=False):
+            self._name = name
+
         def input(self, index):
             return stub.viewer_input
+
+        def knob(self, name):
+            if name in self._objects:
+                return self._objects[name]
+            if name in self.knobs:
+                k = StubKnob(name)
+                k.setValue(self.knobs[name])
+                self._objects[name] = k
+                return k
+            return None
+
+        def addKnob(self, knob):
+            self._objects[knob.name()] = knob
+
+        def xpos(self):
+            return 0
+
+        def ypos(self):
+            return 0
+
+        def setXYpos(self, x, y):
+            pass
 
     class Nodes:
         @staticmethod
         def Write(**knobs):
             node = StubNode("Write1", **knobs)
+            stub.created.append(node)
+            return node
+
+        @staticmethod
+        def Read(**knobs):
+            node = StubNode("Read1", **knobs)
             stub.created.append(node)
             return node
 
@@ -153,6 +188,13 @@ def make_stub():
     stub.execute = execute
     stub.delete = lambda node: stub.deleted.append(node)
     stub.StubNode = StubNode
+
+    class TabKnob(StubKnob):
+        pass
+
+    stub.Tab_Knob = TabKnob
+    stub.Text_Knob = StubKnob
+    stub.PyScript_Knob = lambda name, label="", command="": StubKnob(name, label)
     return stub
 
 
@@ -457,6 +499,83 @@ def main():
     capture.discard(picture)
     check(not Path(picture).exists(), "the temporary frame is cleaned up")
     state.client = StubClient()
+
+    # -- the Kitsu Write node -------------------------------------------------
+    from BB_pipeline_nuke import review as nuke_review
+    from BB_pipeline_nuke import writenode
+
+    stamp.write(context.at_version(4))
+    nuke.selected = []
+
+    node = writenode.create()
+    check(writenode.is_ours(node), "the Write is marked as ours")
+    check(writenode.stream_of(node) == "main", "and knows its stream")
+
+    written = node.knob("file").value()
+    check(written.endswith(".exr") and "%04d" in written,
+          "its path is a frame pattern (%s)" % os.path.basename(written))
+    check("internalRender" in written and "_v004" in written,
+          "under the version it belongs to")
+    check(written == written.replace(chr(92), "/"),
+          "with forward slashes, which is what Nuke wants")
+
+    for knob in ("bb_set_path", "bb_add_read", "bb_publish"):
+        check(node.knob(knob) is not None, "%s button is on the node" % knob)
+
+    # A script with no context must refuse before making anything.
+    made_before = len(nuke.created)
+    del nuke._root.knobs[stamp.KNOB]
+    nuke._root._name = "Root"
+    try:
+        writenode.create()
+        refused = False
+    except writenode.WriteError:
+        refused = True
+    check(refused, "a script with no Kitsu context refuses to make a Write")
+    check(len(nuke.created) == made_before, "and makes nothing on the way out")
+    stamp.write(context.at_version(4))
+
+    # -- finding what was rendered --------------------------------------------
+    pattern = written
+    check(nuke_review.rendered_frames(pattern) == [],
+          "nothing rendered yet means no frames")
+
+    folder = Path(pattern).parent
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = Path(pattern).name.replace("%04d", "%d")
+    for frame in (1001, 1002, 1003):
+        (folder / (stem % frame)).write_bytes(b"exr")
+
+    found = nuke_review.rendered_frames(pattern)
+    check(len(found) == 3, "the rendered frames are found (%d)" % len(found))
+    check(nuke_review.frame_span(pattern, found) == (1001, 1003),
+          "and their range is read off the names (%s)"
+          % str(nuke_review.frame_span(pattern, found)))
+
+    read = writenode.add_read(node)
+    check(read is not None and read.knobs.get("file") == pattern,
+          "Add Read Node reads exactly what was written")
+    check(read.knobs.get("first") == 1001 and read.knobs.get("last") == 1003,
+          "over the rendered range")
+
+    # -- the review movie ------------------------------------------------------
+    movie, problem = nuke_review.build_movie(pattern)
+    check(problem == "" and movie and movie.endswith(".mp4"),
+          "a review movie is built as mp4 (%s / %r)"
+          % (os.path.basename(movie or ""), problem))
+    built = nuke.created[-1]
+    check(built.knobs.get("file_type") == "mov",
+          "through the mov writer (%s)" % built.knobs.get("file_type"))
+    check(built.knobs.get("colorspace") == nuke_review.REVIEW_COLORSPACE,
+          "written through sRGB")
+    check(all(n in nuke.deleted for n in nuke.created[-2:]),
+          "and the temporary Read and Write are removed")
+    nuke_review.discard(movie)
+
+    check(nuke_review.as_glob("a/b_v001.%04d.exr") == "a/b_v001.*.exr",
+          "printf patterns glob")
+    check(nuke_review.as_glob("a/b_v001.####.exr") == "a/b_v001.*.exr",
+          "and so do hashes")
 
     # -- the menu -------------------------------------------------------------
     check(package.MENU == "Kitsu", "the menu is called Kitsu")
