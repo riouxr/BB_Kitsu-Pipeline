@@ -1,0 +1,11 @@
+# The pipeline runs on Linux render nodes as well as Windows workstations, so
+# keep source line endings LF everywhere. Without this, Git for Windows'
+# system-level core.autocrlf=true writes CRLF into `git archive` output even
+# though the blobs are LF.
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+.gitignore text eol=lf
+
+# PowerShell is the Windows-side helper; leave it CRLF.
+*.ps1 text eol=crlf

@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Build output
+dist/
+*.zip
+
+# Local, machine-specific pipeline config - the defaults are in
+# BB_core/presets/default.toml and those are the ones that get committed.
+config.toml
+.venv/
+venv/
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

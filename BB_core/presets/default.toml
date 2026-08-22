@@ -1,0 +1,102 @@
+# BB Kitsu pipeline - default configuration
+#
+# Everything the pipeline knows about naming and layout lives here rather than
+# in code, so the studio can retarget the tool without a release. Copy this
+# file, edit it, and point BB_PIPELINE_CONFIG at the copy to override.
+
+[naming]
+# Field values are sanitized down to this character set. Underscore is
+# deliberately excluded: it is the field separator, and keeping it out of the
+# values is what lets a finished name be parsed back into a context.
+allowed = "A-Za-z0-9.-"
+replacement = "-"
+version_padding = 3
+
+# The canonical studio scheme, matching the studio's Nuke output gizmo:
+#   VIL_FF9_0070_precomp3d_v003
+base = "{project}_{group}_{entity}_{task}"
+versioned = "{base}_v{version}"
+
+[paths]
+# Filled in from add-on preferences at runtime; left blank so a misconfigured
+# install fails loudly instead of writing somewhere unexpected.
+work_root = ""
+render_root = ""
+
+# The roots are the project folder - one show per root, set per project, so
+# the layout below starts inside it. A studio keeping several shows under one
+# shared root prefixes these with "{project}/" instead.
+#
+# Work files sit flat in a per-task folder; the version is in the filename.
+# {group}/{entity} is sequence/shot for a shot and asset type/asset for an
+# asset, so the two trees are kept apart by their own prefix rather than by
+# hoping a sequence is never named the same as an asset type.
+work_dir_shot = "{group}/{entity}/{task}"
+work_dir_asset = "assets/{group}/{entity}/{task}"
+work_file = "{versioned}.{ext}"
+
+# Renders get a version *folder*, one level under a per-stream folder, so a
+# single version can emit several parallel outputs.
+render_dir_shot = "{group}/{entity}/{task}/internalRender/{stream}/{versioned}"
+render_dir_asset = "assets/{group}/{entity}/{task}/internalRender/{stream}/{versioned}"
+render_file = "{versioned}.{frame}.{ext}"
+
+# Per-project overrides, for shows that do not live under the common root.
+# Anything valid under [paths] can be overridden here, matched against the
+# project code (or its name, when no code is set in Kitsu) case-insensitively:
+#
+#   [projects.PizzaHunt]
+#   work_root = "I:/PizzaHunt"
+#   render_root = "I:/PizzaHunt/_renders"
+
+# Each DCC only offers the tasks it is actually used for, filtered on the
+# Kitsu department the task type belongs to. Leave `departments` out to offer
+# every task. Names are matched case-insensitively; a task type with no
+# department is only offered when `departments` is absent.
+[dcc.blender]
+ext = "blend"
+departments = ["Animation", "FX", "Layout", "Lighting", "Modeling"]
+
+[dcc.nuke]
+ext = "nk"
+departments = ["Compositing", "2D"]
+
+[dcc.resolve]
+ext = "drp"
+departments = ["Compositing", "2D"]
+
+# Parallel outputs derivable from one render context. Only `main` is wired up
+# yet; the rest are here so the shape is settled before the render side lands.
+[streams.main]
+folder = "main"
+ext = "exr"
+colorspace = "ACES - ACEScg"
+
+[streams.proxy]
+folder = "proxy"
+ext = "exr"
+colorspace = "ACES - ACEScg"
+resolution_scale = 0.5
+
+[streams.offline]
+folder = "offline"
+ext = "mov"
+colorspace = "Output - Rec.709"
+burn_in = true
+
+# Viewport playblasts. Rendered straight to H.264 because nothing downstream
+# needs the frames, and H.264 is what Kitsu re-encodes everything to anyway.
+[streams.playblast]
+folder = "playblast"
+ext = "mp4"
+colorspace = "Output - Rec.709"
+
+[streams.matte]
+folder = "matte"
+ext = "exr"
+colorspace = "ACES - ACES2065-1"
+
+[streams.plate]
+folder = "plate"
+ext = "exr"
+colorspace = "ACES - ACES2065-1"

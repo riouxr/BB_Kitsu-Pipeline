@@ -1,0 +1,26 @@
+schema_version = "1.0.0"
+
+id = "BB_pipeline"
+version = "0.1.0"
+name = "BB Kitsu Pipeline"
+tagline = "Kitsu shot browser, work files and versioning"
+maintainer = "riouxr <riouxr@gmail.com>"
+type = "add-on"
+
+# 4.2 is the first release with the extension system, and its bundled Python
+# is 3.11 - which is also the first with tomllib, so the config loader needs
+# nothing extra. Kitsu access rides on the requests Blender already ships.
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+tags = ["Pipeline", "Import-Export", "Render"]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".*",
+  "*.zip",
+]

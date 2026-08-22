@@ -1,0 +1,744 @@
+"""Blender-side integration test - no Kitsu server required.
+
+Not named test_*.py on purpose: it can only run inside Blender, and
+unittest's discovery would import it in a plain Python and fail on bpy.
+
+Runs the real add-on against a stubbed session cache, so the create / open /
+increment loop can be tested offline and in CI:
+
+    blender --background --factory-startup --python tests/blender_check.py
+
+Exits non-zero on the first failure, so it is usable as a build gate.
+"""
+
+import base64
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+import bpy
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "blender"))
+
+PACKAGE = "BB_pipeline"
+
+failures = []
+
+
+def check(condition, description):
+    print(("  ok   " if condition else "  FAIL ") + description)
+    if not condition:
+        failures.append(description)
+
+
+# -- stub Kitsu data -----------------------------------------------------------
+
+PROJECT = {"id": "p1", "name": "Test Project", "code": "VIL", "fps": "24"}
+SEQUENCE = {"id": "s1", "name": "FF9", "parent_id": "p1"}
+SHOT = {"id": "sh1", "name": "0070", "parent_id": "s1",
+        "nb_frames": 252, "data": {"frame_in": 1001, "frame_out": 1252}}
+ASSET_TYPE = {"id": "at1", "name": "Prop"}
+ASSET = {"id": "a1", "name": "knife", "entity_type_id": "at1"}
+
+LIGHTING = {"id": "d1", "name": "Lighting"}
+COMPOSITING = {"id": "d2", "name": "Compositing"}
+
+TASK_TYPE = {"id": "tt1", "name": "precomp3d", "department_id": "d1"}
+COMP_TYPE = {"id": "tt2", "name": "Compositing", "department_id": "d2"}
+TASK = {"id": "t1", "task_type_id": "tt1", "entity_id": "sh1"}
+COMP_TASK = {"id": "t2", "task_type_id": "tt2", "entity_id": "sh1"}
+
+
+def install_bb_session(session):
+    """Populate the session as though a login and two fetches had happened."""
+    state = session.state
+    state.client = type("OfflineClient", (), {
+        "logged_in": True,
+        "host": "https://kitsu.test",
+        # Enough surface that a stray fetch answers instead of raising.
+        "task": lambda self, task_id: {"task_status_id": "st1"},
+        "tasks_for_shot": lambda self, shot_id: [TASK, COMP_TASK],
+        "tasks_for_asset": lambda self, asset_id: [TASK],
+    })()
+    state.user = {"full_name": "Offline Test"}
+    state.projects = [PROJECT]
+    state.sequences = [SEQUENCE]
+    state.shots = [SHOT]
+    state.asset_types = [ASSET_TYPE]
+    state.assets = [ASSET]
+    state.tasks = [TASK, COMP_TASK]
+    state.task_types = {TASK_TYPE["id"]: TASK_TYPE, COMP_TYPE["id"]: COMP_TYPE}
+    state.departments = {LIGHTING["id"]: LIGHTING, COMPOSITING["id"]: COMPOSITING}
+    # Blender's configured departments, as fetch._task_departments would set.
+    state.task_departments = {"lighting", "modeling", "animation", "fx", "layout"}
+
+
+def _prefs_config():
+    from BB_pipeline import prefs
+    return prefs.config()
+
+
+def main():
+    _bpy = bpy
+    work_root = Path(tempfile.mkdtemp(prefix="bb_work_"))
+    print("work root: %s" % work_root)
+
+    import BB_pipeline
+    from BB_pipeline import fetch, properties, session, stamp
+
+    check(BB_pipeline.core.available,
+          "shared core located (%s)" % (BB_pipeline.core.error or "ok"))
+
+    # An add-on entry has to exist before AddonPreferences can be read; a
+    # normal install creates it, and registering by hand here does not.
+    bpy.context.preferences.addons.new().module = PACKAGE
+    BB_pipeline.register()
+
+    try:
+        preferences = bpy.context.preferences.addons[PACKAGE].preferences
+        preferences.server = "https://kitsu.test"
+        preferences.email = "test@example.com"
+        preferences.work_root = str(work_root)
+        # Off for the file-loop checks; exercised on its own below.
+        preferences.publish_on_save = False
+        preferences.render_root = str(work_root / "renders")
+
+        install_bb_session(session)
+
+        # Re-read through properties.get() after anything that reloads a
+        # file: the selectors live on the WindowManager, which gets
+        # replaced, so a held reference goes stale.
+        props = properties.get()
+        with properties.suspend_updates():
+            props.project = "p1"
+            props.entity_type = "SHOT"
+            props.sequence = "s1"
+            props.shot = "sh1"
+            props.task = "t1"
+
+        # -- the per-DCC task filter ---------------------------------------------
+        offered = [item[1] for item in properties.task_items(props, bpy.context)]
+        check(offered == ["precomp3d"],
+              "Blender offers only its own departments (got %s)" % offered)
+        check("Compositing" not in offered,
+              "a compositing task is not offered in Blender")
+
+        shot_context = fetch.current_context()
+        check(shot_context is not None, "context built from the selectors")
+        check(shot_context.versioned(1) == "VIL_FF9_0070_precomp3d_v001",
+              "context names to the studio scheme (got %s)" % shot_context.versioned(1))
+        check(shot_context.project == "VIL", "project code preferred over its name")
+
+        # -- empty shot ---------------------------------------------------------
+        fetch.refresh_workfiles()
+        check(len(session.state.workfiles) == 0, "a fresh shot lists no scene files")
+
+        # -- create v001 --------------------------------------------------------
+        result = bpy.ops.bb.new_workfile()
+        check(result == {"FINISHED"}, "new_workfile succeeded (%s)" % result)
+
+        expected = (work_root / "FF9" / "0070" / "precomp3d"
+                    / "VIL_FF9_0070_precomp3d_v001.blend")
+        check(expected.is_file(), "v001 written to the templated path")
+        check(Path(bpy.data.filepath) == expected, "the new file is the one now open")
+
+        stamped, source = stamp.read_current()
+        check(source == "stamp", "the saved scene carries a stamped context")
+        check(stamped.version == 1, "the stamp records v001")
+        check(stamped.task_id == "t1", "the stamp keeps the Kitsu task id")
+        check(stamped.entity_id == "sh1", "the stamp keeps the Kitsu shot id")
+
+        fetch.refresh_workfiles()
+        props = properties.get()
+        check(len(session.state.workfiles) == 1, "the browser now lists one version")
+        check(props.version == "1", "the version selector lands on the open file")
+
+        # -- increment ----------------------------------------------------------
+        result = bpy.ops.bb.save_next_version()
+        check(result == {"FINISHED"}, "save_next_version succeeded (%s)" % result)
+
+        v002 = expected.parent / "VIL_FF9_0070_precomp3d_v002.blend"
+        check(v002.is_file(), "v002 written next to v001")
+        check(Path(bpy.data.filepath) == v002, "v002 is now the open file")
+        check(stamp.read_current()[0].version == 2, "the stamp followed the version")
+        check(stamp.read_current()[0].task_id == "t1", "the ids survived the increment")
+
+        fetch.refresh_workfiles()
+        props = properties.get()
+        check([v for v, _ in reversed(session.state.workfiles)] == [2, 1],
+              "versions list newest first")
+        check(props.version == "2", "the selector follows the file just saved")
+
+        # -- a foreign file must not move the version on ------------------------
+        (expected.parent / "old_backup.blend").write_bytes(b"")
+        (expected.parent / "VIL_FF9_0070_lighting_v009.blend").write_bytes(b"")
+        fetch.refresh_workfiles()
+        check(len(session.state.workfiles) == 2, "files from other tasks are ignored")
+
+        result = bpy.ops.bb.new_workfile()
+        check(result == {"FINISHED"}, "third new_workfile succeeded")
+        check(properties.get().project == "p1",
+              "the selection survives creating a version from the startup file")
+        v003 = expected.parent / "VIL_FF9_0070_precomp3d_v003.blend"
+        check(v003.is_file(), "next version is v003, not v010")
+
+        # -- reopen -------------------------------------------------------------
+        bpy.ops.wm.open_mainfile(filepath=str(expected))
+        check(Path(bpy.data.filepath) == expected, "v001 reopened")
+
+        reopened, source = stamp.read_current()
+        check(source == "stamp", "the reopened file still carries its stamp")
+        check(reopened.version == 1 and reopened.task_id == "t1",
+              "context restored from the file with its ids intact")
+
+        props = properties.get()
+        check(props.project == "p1" and props.shot == "sh1" and props.task == "t1"
+              and props.entity_type == "SHOT",
+              "the load handler put the selectors back")
+
+        # -- a missing root reports, it does not traceback ------------------------
+        # Nested bpy.ops raise RuntimeError back into Python when the inner
+        # operator reports an error; the browser must turn that into a message.
+        from BB_pipeline import prefs as _prefs
+        saved_root = preferences.work_root
+        preferences.work_root = ""
+        ready, why = _prefs.roots_ready()
+        check(not ready and "Work Root" in why, "missing root is detected up front")
+        # bpy.ops always re-raises a reported error to a Python caller, so what
+        # is checked here is *which* message comes out: the guard's actionable
+        # one, not the core exception leaking through a nested operator.
+        try:
+            bpy.ops.bb.new_workfile("EXEC_DEFAULT")
+            message = ""
+        except RuntimeError as error:
+            message = str(error)
+        check("work_root" in message or "Work Root" in message,
+              "the acting button surfaces an actionable message (%r)" % message)
+        check("paths.work_root" not in message,
+              "the raw core exception does not leak through")
+        preferences.work_root = saved_root
+
+        # -- publish on save -----------------------------------------------------
+        from BB_pipeline import publish
+        sent = {}
+
+        class StubClient:
+            logged_in = True
+            host = "https://kitsu.test"
+
+            def tasks_for_shot(self, shot_id):
+                return [TASK, COMP_TASK]
+
+            def tasks_for_asset(self, asset_id):
+                return [TASK]
+
+            def task(self, task_id):
+                return {"task_status_id": "st1"}
+
+            def _request(self, method, path, **kwargs):
+                sent["comment_only"] = kwargs.get("json", {}).get("comment")
+                return {"id": "c1"}
+
+            def publish_preview(self, task_id, file_path, comment="",
+                                task_status_id=None, log=None):
+                sent["task_id"] = task_id
+                sent["comment"] = comment
+                sent["status"] = task_status_id
+                sent["file"] = file_path
+                return {"comment": {"id": "c1"}, "preview": {"id": "p1"}}
+
+        session.state.client = StubClient()
+        ctx = stamp.read_current()[0]
+
+        preferences.publish_on_save = False
+        check(publish.why_not(bpy.context, ctx) != "",
+              "publish is skipped when switched off")
+
+        preferences.publish_on_save = True
+        preferences.preview_on_save = False   # no GPU in background mode
+        check(publish.why_not(bpy.context, ctx) == "",
+              "a stamped context connected to Kitsu can publish")
+
+        idless = session.EntityContext(project="VIL", group="a", entity="b",
+                                       task="c", version=1)
+        check("no Kitsu task" in publish.why_not(bpy.context, idless),
+              "a context with no ids has nowhere to publish")
+
+        # -- the comment and status dialog ----------------------------------------
+        props = properties.get()
+        check(properties.selected_status_id() is None,
+              "status defaults to leaving the task alone")
+
+        state = session.state
+        state.statuses = [{"id": "st9", "name": "Waiting For Approval",
+                           "short_name": "wfa"}]
+        items = properties.status_items(props, bpy.context)
+        check(items[0][0] == properties.KEEP_STATUS,
+              "leave-unchanged is the first status offered")
+        check(any(i[0] == "st9" for i in items),
+              "Kitsu statuses are offered (%s)" % [i[1] for i in items])
+
+        props.task_status = "st9"
+        check(properties.selected_status_id() == "st9",
+              "a chosen status is passed through")
+        props.comment = "looks good"
+
+        note = publish.send(bpy.context, ctx, Path("VIL_x_y_z_v001.blend"),
+                            comment=props.comment,
+                            task_status_id=properties.selected_status_id())
+        check("Kitsu" in note, "send reports that Kitsu is being updated (%r)" % note)
+
+        check(hasattr(bpy.ops.bb, "publish_save"), "publish dialog is registered")
+        properties.clear(props, "task_status")
+        preferences.publish_on_save = False
+
+        # -- the Assets tab ------------------------------------------------------
+        props = properties.get()
+        with properties.suspend_updates():
+            props.entity_type = "ASSET"
+            props.asset_type = "at1"
+            props.asset = "a1"
+            props.task = "t1"
+
+        asset_context = fetch.current_context()
+        check(asset_context is not None, "asset context builds from the Assets tab")
+        check(asset_context.entity_type == "asset", "context knows it is an asset")
+        check(asset_context.versioned(1) == "VIL_Prop_knife_precomp3d_v001",
+              "asset names use the same scheme (%s)" % asset_context.versioned(1))
+
+        asset_dir = session.workfiles_module.work_dir(
+            asset_context, _prefs_config())
+        check("assets" in Path(asset_dir).parts,
+              "assets sit under their own prefix (%s)" % asset_dir)
+
+        with properties.suspend_updates():
+            props.entity_type = "SHOT"
+
+        # -- refresh picks up what Kitsu gained, without losing the selection -----
+        class GrowingClient(StubClient):
+            """Kitsu with a sequence added since the browser last looked."""
+
+            def sequences(self, project_id):
+                return [SEQUENCE, {"id": "s2", "name": "NewSeq", "parent_id": "p1"}]
+
+            def shots_for_project(self, project_id):
+                return [SHOT, {"id": "sh2", "name": "0080", "parent_id": "s2"}]
+
+            def asset_types(self, project_id):
+                return [ASSET_TYPE]
+
+            def assets_for_project(self, project_id):
+                return [ASSET]
+
+            def task_types(self):
+                return [TASK_TYPE, COMP_TYPE]
+
+            def departments(self):
+                return [LIGHTING, COMPOSITING]
+
+            def task_statuses(self):
+                return []
+
+        session.state.client = GrowingClient()
+        props = properties.get()
+        with properties.suspend_updates():
+            props.entity_type = "SHOT"
+            props.sequence = "s1"
+            props.shot = "sh1"
+            props.task = "t1"
+
+        session.state.sequences = []      # the cache goes stale
+        session.state.shots = []
+        fetch.refresh_project(bpy.context)
+
+        check([q["name"] for q in session.state.sequences] == ["FF9", "NewSeq"],
+              "refresh picks up a sequence added in Kitsu")
+        check(len(session.state.shots) == 2, "refresh picks up the new shot")
+        props = properties.get()
+        check(props.sequence == "s1" and props.shot == "sh1" and props.task == "t1",
+              "refresh keeps the selection it started with")
+
+        session.state.client = StubClient()
+
+        # -- append / link and previews -------------------------------------------
+        from BB_pipeline import autoconnect, capture
+        check(hasattr(bpy.ops.bb, "append_workfile")
+              and hasattr(bpy.ops.bb, "link_workfile"),
+              "Append and Link operators are registered")
+
+        paths = bpy.context.preferences.filepaths
+        paths.file_preview_type = "NONE"
+        with capture.embedded_preview():
+            check(paths.file_preview_type == "AUTO",
+                  "thumbnails are forced on while the pipeline saves")
+        check(paths.file_preview_type == "NONE",
+              "the preview preference is put back afterwards")
+        paths.file_preview_type = "AUTO"
+
+        # No GPU in background mode, so this must return 0 rather than raise.
+        made = capture.generate_datablock_previews(bpy.context)
+        check(isinstance(made, int),
+              "preview generation degrades quietly without a GPU (%r)" % made)
+
+        # -- frame range and frame rate -------------------------------------------
+        from BB_pipeline import scenesync
+
+        class FramesClient(StubClient):
+            served = {"id": "sh1", "name": "0070", "parent_id": "s1",
+                      "nb_frames": 252,
+                      "data": {"frame_in": 1001, "frame_out": 1252}}
+
+            def shot(self, shot_id):
+                return FramesClient.served
+
+        session.state.client = FramesClient()
+        shot_ctx = session.EntityContext(
+            entity_type="shot", project="VIL", group="FF9", entity="0070",
+            task="precomp3d", project_id="p1", group_id="s1", entity_id="sh1",
+            task_id="t1", version=1)
+
+        settings = scenesync.kitsu_settings(shot_ctx)
+        check(settings["frame_start"] == 1001 and settings["frame_end"] == 1252,
+              "frame range comes off the shot (%s)" % settings)
+        check(settings["fps"] == 24 and settings["fps_base"] == 1.0,
+              "frame rate comes off the project")
+
+        scene = bpy.context.scene
+        scene.frame_start, scene.frame_end = 1, 250
+        diffs = scenesync.differences(scene, settings)
+        check(len(diffs) >= 2, "a default scene disagrees with Kitsu (%s)" % diffs)
+
+        applied = scenesync.apply(scene, settings)
+        check(scene.frame_start == 1001 and scene.frame_end == 1252,
+              "applying sets the scene range")
+        check(scenesync.differences(scene, settings) == [],
+              "and then nothing disagrees")
+        check(scenesync.apply(scene, settings) == [],
+              "applying twice is a no-op")
+
+        # A shot whose range moved in Kitsu since the file was saved.
+        FramesClient.served = dict(FramesClient.served,
+                                   data={"frame_in": 1001, "frame_out": 1300})
+        moved = scenesync.kitsu_settings(shot_ctx)
+        check("end 1252 -> 1300" in scenesync.differences(scene, moved),
+              "a range that moved in Kitsu is spotted (%s)"
+              % scenesync.differences(scene, moved))
+
+        preferences.frame_range_on_open = "APPLY"
+        note = scenesync.on_open(bpy.context, shot_ctx)
+        check(scene.frame_end == 1300, "APPLY mode fixes the scene")
+        check("applied" in note.lower(), "and says so (%r)" % note)
+
+        preferences.frame_range_on_open = "IGNORE"
+        check(scenesync.on_open(bpy.context, shot_ctx) == "",
+              "IGNORE mode says nothing")
+        preferences.frame_range_on_open = "WARN"
+
+        asset_ctx = session.EntityContext(entity_type="asset", project="VIL",
+                                          group="Prop", entity="knife",
+                                          task="Modeling", entity_id="a1",
+                                          version=1)
+        check(scenesync.kitsu_settings(asset_ctx) is None,
+              "assets have no frame range")
+
+        check(hasattr(bpy.ops.bb, "apply_frame_range"),
+              "the fix operator is registered")
+        session.state.client = StubClient()
+
+        # -- the browser remembers where it was left --------------------------------
+        from BB_pipeline import prefs as _p
+        session.state.client = GrowingClient()
+        props = properties.get()
+
+        with properties.suspend_updates():
+            props.entity_type = "ASSET"
+            props.asset_type = "at1"
+            props.asset = "a1"
+            props.task = "t1"
+        _p.remember(bpy.context)
+
+        marked = _p.recall(bpy.context)
+        check(marked["entity_type"] == "ASSET" and marked["asset"] == "a1",
+              "the selection is bookmarked (%s)" % marked["entity_type"])
+
+        # Loading a project clears the selectors on the way through. That must
+        # not overwrite the bookmark with the blank state it passes through.
+        fetch.project_selected(bpy.context)
+        after = _p.recall(bpy.context)
+        check(after["entity_type"] == "ASSET" and after["asset"] == "a1",
+              "clearing for a project load does not clobber it (%s)" % after["entity_type"])
+
+        props = properties.get()
+        check(props.entity_type == "ASSET" and props.asset == "a1",
+              "and the selection is put back afterwards (%s/%s)"
+              % (props.entity_type, props.asset))
+
+        # A bookmark pointing at something Kitsu no longer has is dropped.
+        preferences.last_asset = "gone"
+        fetch.project_selected(bpy.context)
+        check(properties.get().asset != "gone",
+              "a deleted entity is not restored")
+        preferences.last_asset = "a1"
+
+        session.state.client = StubClient()
+
+        # -- render targets and review ---------------------------------------------
+        from BB_pipeline import render, review
+
+        for name in ("render_image", "render_animation", "render_playblast",
+                     "submit_render"):
+            check(hasattr(bpy.ops.bb, name), "%s is registered" % name)
+        check(hasattr(bpy.types, "BB_PT_review"),
+              "the review panel is registered for the render window")
+
+        session.state.client = FramesClient()
+        stamp.write(bpy.context.scene, shot_ctx.at_version(3))
+
+        entity, stream, directory, stem, settings = render.target(
+            bpy.context, render.ANIMATION)
+        check(stream == "main", "an animation goes to the main stream")
+        check(stem == "VIL_FF9_0070_precomp3d_v003",
+              "the render is named off the scene version (%s)" % stem)
+        check("internalRender" in Path(directory).parts
+              and Path(directory).name == stem,
+              "renders land in a per-version stream folder (%s)" % directory)
+        check(settings.get("ext") == "exr", "the main stream is EXR")
+
+        _, blast_stream, blast_dir, _, blast_settings = render.target(
+            bpy.context, render.PLAYBLAST)
+        check(blast_stream == "playblast", "a playblast has its own stream")
+        check(blast_settings.get("ext") == "mp4",
+              "playblasts are H.264 from the start")
+        check(Path(blast_dir) != Path(directory),
+              "a playblast does not overwrite the render")
+
+        # A stamp that has been lost is not fatal for rendering: the filename
+        # still parses, and rendering needs a version, not Kitsu ids. It is
+        # fatal for *submitting*, which does need the task.
+        del bpy.context.scene[stamp.key()]
+        recovered, source = stamp.read_current()
+        open_version = int(Path(bpy.data.filepath).stem.rsplit("_v", 1)[1])
+        check(source == "filename" and recovered.version == open_version,
+              "an unstamped but well-named file still resolves (%s v%s)"
+              % (source, recovered.version))
+        _, _, _, recovered_stem, _ = render.target(bpy.context, render.ANIMATION)
+        check(recovered_stem.endswith("_v%03d" % open_version),
+              "and renders under the version in its name (%s)" % recovered_stem)
+        check(not recovered.task_id, "but carries no Kitsu task")
+
+        session.state.last_render = {"directory": str(Path(directory)),
+                                     "stem": stem, "context": recovered}
+        check("no Kitsu task" in review.submit(bpy.context),
+              "so submitting it is refused")
+        stamp.write(bpy.context.scene, shot_ctx.at_version(3))
+
+        # -- what review finds on disk --------------------------------------------
+        render_dir = Path(directory)
+        render_dir.mkdir(parents=True, exist_ok=True)
+        for frame in (1001, 1002, 1003):
+            (render_dir / ("%s.%d.exr" % (stem, frame))).write_bytes(b"")
+        (render_dir / "something_else.1001.exr").write_bytes(b"")
+
+        found = review.frames_on_disk(
+            {"directory": str(render_dir), "stem": stem})
+        check(len(found) == 3, "the render's own frames are found (%d)" % len(found))
+        check(all(stem in Path(f).name for f in found),
+              "and nothing belonging to another render")
+        check([Path(f).name for f in found] == sorted(Path(f).name for f in found),
+              "frames come back in order")
+
+        lines = review.summary()
+        session.state.last_render = {"directory": str(render_dir), "stem": stem,
+                                     "context": shot_ctx}
+        lines = review.summary()
+        check(any("H.264" in line for line in lines),
+              "the panel says EXR frames become H.264 (%s)" % lines)
+
+        check(review.frames_on_disk({"directory": str(render_dir),
+                                     "stem": "nothing_here"}) == [],
+              "a render with no frames yet reports none")
+
+        # -- a single still ---------------------------------------------------------
+        still_dir = render_dir.parent / "stills"
+        still_dir.mkdir(parents=True, exist_ok=True)
+
+        # What Render Image writes now: the frame number is in the name, the
+        # same as every other frame.
+        numbered = still_dir / ("%s.1001.exr" % stem)
+        numbered.write_bytes(b"")
+        found = review.frames_on_disk({"directory": str(still_dir), "stem": stem})
+        check([Path(f).name for f in found] == [numbered.name],
+              "a numbered still is found (%s)" % [Path(f).name for f in found])
+
+        session.state.last_render = {"directory": str(still_dir), "stem": stem,
+                                     "context": shot_ctx}
+        check(any("PNG" in line for line in review.summary()),
+              "and reports that it becomes a PNG (%s)" % review.summary())
+
+        # A still written before that fix had no frame number at all, and
+        # finding nothing is what produced "nothing rendered to submit".
+        numbered.unlink()
+        (still_dir / ("%s.exr" % stem)).write_bytes(b"")
+        found = review.frames_on_disk({"directory": str(still_dir), "stem": stem})
+        check(len(found) == 1,
+              "an unnumbered still is found too (%d)" % len(found))
+
+        # -- uploads are capped to a review size ------------------------------------
+        preferences.review_max_width = 1920
+        check(review.review_size(bpy.context, 3840, 2160) == (1920, 1080),
+              "4K is halved for review")
+        check(review.review_size(bpy.context, 1280, 720) == (1280, 720),
+              "and anything already smaller is left alone")
+        check(review.review_size(bpy.context, 1999, 1080)[1] % 2 == 0,
+              "the scaled height stays even, or H.264 will not encode it")
+        preferences.review_max_width = 0
+        check(review.review_size(bpy.context, 3840, 2160) == (3840, 2160),
+              "no cap - the default - uploads at full size")
+        check(preferences.bl_rna.properties["review_max_width"].default == 0,
+              "and full size is what a fresh install does")
+
+        # -- the still format is a choice -------------------------------------------
+        real = still_dir / ("%s.1002.exr" % stem)
+        source = bpy.data.images.new("src", 64, 36, float_buffer=True)
+        source.generated_color = (0.4, 0.2, 0.1, 1.0)
+        source.filepath_raw = str(real)
+        source.file_format = 'OPEN_EXR'
+        source.save()
+        bpy.data.images.remove(source)
+
+        preferences.still_format = "PNG"
+        made = review.convert_still(bpy.context, str(real))
+        check(made is not None and made.endswith(".png"),
+              "a still converts to PNG by default (%s)" % made)
+        png_size = Path(made).stat().st_size if made else 0
+        if made:
+            Path(made).unlink()
+
+        preferences.still_format = "JPEG"
+        preferences.still_quality = 90
+        made = review.convert_still(bpy.context, str(real))
+        check(made is not None and made.endswith(".jpg"),
+              "and to JPEG when asked (%s)" % made)
+        jpeg_size = Path(made).stat().st_size if made else 0
+        if made:
+            Path(made).unlink()
+
+        check(jpeg_size and png_size,
+              "both formats produced a file (%d / %d bytes)" % (png_size, jpeg_size))
+
+        session.state.last_render = {"directory": str(still_dir), "stem": stem,
+                                     "context": shot_ctx}
+        check(any("JPEG" in line for line in review.summary()),
+              "the panel names the format it will use (%s)" % review.summary())
+        preferences.still_format = "PNG"
+        real.unlink()
+
+        # -- movie names ------------------------------------------------------------
+        movie_dir = render_dir.parent / "playblast"
+        movie_dir.mkdir(parents=True, exist_ok=True)
+        (movie_dir / ("%s1001-1005.mp4" % stem)).write_bytes(b"x")
+        render.tidy_movie_name({"movie": True, "directory": str(movie_dir),
+                                "stem": stem})
+        check((movie_dir / ("%s.mp4" % stem)).is_file(),
+              "the frame range Blender glues onto a movie is removed")
+        check(not (movie_dir / ("%s1001-1005.mp4" % stem)).exists(),
+              "and the mangled name is gone")
+
+        # A still render must not be renamed as though it were a movie.
+        (still_dir / ("%s.9999.exr" % stem)).write_bytes(b"")
+        render.tidy_movie_name({"movie": False, "directory": str(still_dir),
+                                "stem": stem})
+        check((still_dir / ("%s.9999.exr" % stem)).is_file(),
+              "a still render is left alone")
+
+        session.state.last_render = None
+        check("nothing has been rendered" in review.submit(bpy.context),
+              "submitting with no render says so")
+        session.state.client = StubClient()
+
+        # -- Kitsu thumbnails ------------------------------------------------------
+        from BB_pipeline import thumbnails
+        thumbnails.clear()
+
+        ONE_PIXEL_PNG = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+            "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+        class ThumbClient(StubClient):
+            calls = []
+
+            def thumbnail(self, preview_file_id):
+                ThumbClient.calls.append(preview_file_id)
+                return ONE_PIXEL_PNG
+
+        client = ThumbClient()
+        with_thumb = {"id": "e1", "name": "knife", "preview_file_id": "pf1"}
+        without = {"id": "e2", "name": "man", "preview_file_id": None}
+
+        check(thumbnails.icon_id(with_thumb) == 0, "nothing cached to begin with")
+        thumbnails.fetch(client, with_thumb)
+        check("pf1" in thumbnails._loaded, "a thumbnail is downloaded and loaded")
+
+        ThumbClient.calls = []
+        thumbnails.fetch(client, with_thumb)
+        check(ThumbClient.calls == [],
+              "a second look costs no request (preview files are immutable)")
+
+        thumbnails.fetch(client, without)
+        check(ThumbClient.calls == [],
+              "an entity with no preview is never asked for")
+        check(thumbnails.icon_id(without) == 0, "and reports no icon")
+
+        thumbnails.clear()
+        check(not thumbnails._loaded, "the preview collection is emptied on clear")
+
+        # -- automatic connect ----------------------------------------------------
+        autoconnect.unregister()
+        autoconnect.register()
+        check(bpy.app.timers.is_registered(autoconnect._try_connect),
+              "the startup connect is scheduled")
+        autoconnect.unregister()
+        session.state.client = None
+        check(autoconnect._try_connect() is None,
+              "the startup connect does not reschedule itself")
+        session.state.client = StubClient()
+
+        # -- the top bar menu ---------------------------------------------------
+        from BB_pipeline import menu
+        check(hasattr(_bpy.types, "BB_MT_main"), "Kitsu menu registered")
+        check(menu._original_draw is not None,
+              "top bar draw patched (menu sits before Help)")
+        source = _bpy.types.TOPBAR_MT_editor_menus.draw.__name__
+        check(source == "_patched_draw", "patched draw is installed (got %s)" % source)
+
+        # -- changing sequence must not raise -------------------------------------
+        # 'NONE' is only a legal enum value while the list is empty, so the
+        # reset used to throw TypeError as soon as a sequence had shots.
+        props = properties.get()
+        try:
+            props.sequence = "s1"
+            crashed = False
+        except TypeError as error:
+            crashed = True
+            print("      %s" % error)
+        check(not crashed, "changing sequence does not raise on the reset")
+
+    finally:
+        BB_pipeline.unregister()
+        check(_bpy.types.TOPBAR_MT_editor_menus.draw.__name__ != "_patched_draw",
+              "top bar draw restored on unregister")
+        shutil.rmtree(work_root, ignore_errors=True)
+
+    print()
+    if failures:
+        print("%d FAILED:" % len(failures))
+        for description in failures:
+            print("  - %s" % description)
+        sys.exit(1)
+    print("all Blender add-on checks passed")
+
+
+if __name__ == "__main__":
+    main()
