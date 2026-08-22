@@ -55,16 +55,18 @@ def source_node():
 
 
 def snapshot(frame=None):
-    '''Render one frame to a temporary PNG. Returns the path, or None.
+    '''Render one frame to a temporary PNG.
 
-    Returns None rather than raising: a missing thumbnail is not a reason to
-    fail a publish that otherwise has a comment worth posting.
+    Returns ``(path, problem)``. Never raises: a missing thumbnail is not a
+    reason to fail a publish that otherwise has a comment worth posting - but
+    the reason comes back with it, because a snapshot that quietly does
+    nothing is indistinguishable from a feature that is not there.
     '''
     nuke = _nuke()
 
     target = source_node()
     if target is None:
-        return None
+        return None, 'nothing to snapshot - select a node or open a Viewer'
 
     if frame is None:
         try:
@@ -89,7 +91,7 @@ def snapshot(frame=None):
     except Exception as error:
         nuke.tprint('BB Kitsu Pipeline: could not snapshot (%s)' % error)
         _discard(path)
-        return None
+        return None, 'could not render a snapshot: %s' % error
     finally:
         if write is not None:
             try:
@@ -99,9 +101,9 @@ def snapshot(frame=None):
 
     if not os.path.isfile(path) or not os.path.getsize(path):
         _discard(path)
-        return None
+        return None, 'the snapshot render produced no file'
 
-    return path
+    return path, ''
 
 
 def _discard(path):

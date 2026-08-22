@@ -393,7 +393,9 @@ def main():
 
     check(capture.source_node() is None,
           "nothing selected and no viewer means nothing to snapshot")
-    check(capture.snapshot() is None, "and no snapshot is attempted")
+    picture, problem = capture.snapshot()
+    check(picture is None and "nothing to snapshot" in problem,
+          "and it says why rather than failing silently (%r)" % problem)
     check(capture.describe() == "", "and the dialog is told there is nothing")
 
     node = nuke.StubNode("Merge1")
@@ -401,9 +403,10 @@ def main():
     check(capture.source_node() is node, "one selected node is the source")
     check(capture.describe() == "Merge1", "and the dialog names it")
 
-    picture = capture.snapshot(frame=1005)
+    picture, problem = capture.snapshot(frame=1005)
     check(picture is not None and Path(picture).is_file(),
           "a snapshot renders a file (%s)" % picture)
+    check(problem == "", "with no problem to report")
     span = str(nuke.executed[-1][1:]) if nuke.executed else "none"
     check(nuke.executed and nuke.executed[-1][1:] == (1005, 1005),
           "one frame only (%s)" % span)
@@ -423,6 +426,17 @@ def main():
     check(capture.describe() == "FromViewer",
           "an ambiguous selection defers to the Viewer (%s)" % capture.describe())
     nuke.selected = [node]
+
+    # A Write that will not build has to come back with the reason.
+    def broken(**knobs):
+        raise RuntimeError("unknown knob create_directories")
+
+    real_write = nuke.nodes.Write
+    nuke.nodes.Write = broken
+    failed, why = capture.snapshot()
+    nuke.nodes.Write = real_write
+    check(failed is None and "could not render" in why,
+          "a Write that will not build reports why (%r)" % why)
 
     # -- a snapshot reaches Kitsu through the shared call ---------------------
     class PreviewClient(StubClient):

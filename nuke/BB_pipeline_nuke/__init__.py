@@ -9,6 +9,8 @@ has no comp, and a lighting task has no business opening as a .nk - the task
 filter is the department list in the config, the same mechanism Blender uses
 to show only its 3D tasks.
 '''
+import os
+
 from . import core
 
 # Has to happen before the submodules that import BB_core are touched.
@@ -48,6 +50,12 @@ def install_menu():
     menu.addCommand('Update Kitsu...', _run('update_kitsu()'))
     menu.addSeparator()
     menu.addCommand('Settings...', _run('open_settings()'))
+
+    # Printed so it is possible to tell which build Nuke actually loaded -
+    # Nuke caches imported modules, so an unrestarted session runs old code
+    # and looks identical from the menu.
+    nuke.tprint('BB Kitsu Pipeline %s loaded from %s'
+                % (__version__, os.path.dirname(os.path.dirname(__file__))))
     return menu
 
 

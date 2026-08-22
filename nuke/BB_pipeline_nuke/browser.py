@@ -371,13 +371,22 @@ def ask_to_publish(path):
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return
 
-    picture = capture.snapshot() if snapshot.isChecked() else None
+    picture, problem = (capture.snapshot() if snapshot.isChecked()
+                        else (None, ''))
     try:
-        publish.send(entity_context, path, comment=comment.toPlainText(),
-                     task_status_id=status.currentData(), preview=picture)
+        note = publish.send(entity_context, path, comment=comment.toPlainText(),
+                            task_status_id=status.currentData(), preview=picture)
     finally:
         if picture:
             capture.discard(picture)
+
+    # A snapshot that was asked for and did not happen has to say so. Silently
+    # posting a comment with no picture looks exactly like the feature working.
+    if problem:
+        import nuke
+        nuke.message('The comment was posted, but no thumbnail.'
+                     + chr(10) + chr(10) + problem)
+    state.say(note)
 
 
 # -- settings ----------------------------------------------------------------
