@@ -361,7 +361,7 @@ there is nothing to type.
 | **Browser…** | project ▸ sequence ▸ shot ▸ task ▸ version, with the shot's Kitsu thumbnail |
 | **Import into Current Script** | paste another version's nodes into the open comp |
 | **Save Next Version** | version up the open script |
-| **Update Kitsu…** | comment and status for the script already open |
+| **Update Kitsu…** | comment, status and a snapshot for the script already open |
 
 **Import into Current Script** is on its own row under the other three: those
 replace what is open, this one adds to it, and a mis-click between the two is
@@ -370,6 +370,13 @@ expensive. It uses `nodePaste`, so the nodes arrive selected and ready to move.
 Creating a version sets the script's **frame range and fps** from Kitsu. The
 format is deliberately left alone: a comp's format usually comes from its
 plate, so writing one in would override a decision the artist made on purpose.
+
+Publishing can attach a **snapshot**, which is how a comp gets a thumbnail in
+Kitsu at all. Nuke has no viewport to grab, so it is a real one-frame render
+through a temporary Write node — of the selected node, or of whatever the
+Viewer is looking at. It is written through sRGB, because a linear comp handed
+over untagged arrives flat, and the Write node is removed again so the node
+graph is left exactly as it was.
 
 The context is stamped onto a hidden knob on the root node — knobs save with
 the script, so reopening a comp restores its shot, task, version *and* the

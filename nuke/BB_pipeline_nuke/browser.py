@@ -13,7 +13,7 @@ import os
 from BB_core import credentials, settings
 from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
 
-from . import fetch, publish, scripts, session, stamp, thumbnails
+from . import capture, fetch, publish, scripts, session, stamp, thumbnails
 
 state = session.state
 
@@ -70,10 +70,12 @@ class Browser(object):
         layout.addLayout(form)
 
         # The shot's Kitsu thumbnail, so it can be recognised before anything
-        # is opened. Hidden rather than left blank when there is not one.
+        # is opened. When there is not one it says so rather than going blank:
+        # most shots on a young show have no preview yet, and silence there is
+        # indistinguishable from the feature being broken.
         self.thumbnail = QtWidgets.QLabel('')
         self.thumbnail.setAlignment(QtCore.Qt.AlignCenter)
-        self.thumbnail.setVisible(False)
+        self.thumbnail.setMinimumHeight(24)
         layout.addWidget(self.thumbnail)
 
         self.versions = QtWidgets.QListWidget()
@@ -201,18 +203,19 @@ class Browser(object):
         self._refresh_versions()
 
     def _show_thumbnail(self, shot_id):
-        '''Draw the shot's Kitsu thumbnail, or hide the space it would take.'''
+        '''Draw the shot's Kitsu thumbnail, or say why there is not one.'''
         picture = None
         if state.connected:
             picture = thumbnails.pixmap(state.client, state.shot(shot_id))
 
         if picture is None:
             self.thumbnail.clear()
-            self.thumbnail.setVisible(False)
+            self.thumbnail.setText(
+                '<span style="color:#8a8a8a">no thumbnail in Kitsu for this '
+                'shot</span>')
             return
 
         self.thumbnail.setPixmap(picture)
-        self.thumbnail.setVisible(True)
 
     def _refresh_versions(self):
         self.versions.clear()
@@ -347,6 +350,18 @@ def ask_to_publish(path):
     form.addRow('Status', status)
     layout.addLayout(form)
 
+    # A snapshot is a one-frame render, so it is offered rather than assumed -
+    # but it is on by default, because a task with no picture is the reason
+    # most shots have no thumbnail in Kitsu at all.
+    source = capture.describe()
+    snapshot = QtWidgets.QCheckBox(
+        'Attach a snapshot of %s' % (source or 'the Viewer'))
+    snapshot.setChecked(bool(source))
+    snapshot.setEnabled(bool(source))
+    if not source:
+        snapshot.setText('Nothing to snapshot - select a node or open a Viewer')
+    layout.addWidget(snapshot)
+
     box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
     box.accepted.connect(dialog.accept)
@@ -356,8 +371,13 @@ def ask_to_publish(path):
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return
 
-    publish.send(entity_context, path, comment=comment.toPlainText(),
-                 task_status_id=status.currentData())
+    picture = capture.snapshot() if snapshot.isChecked() else None
+    try:
+        publish.send(entity_context, path, comment=comment.toPlainText(),
+                     task_status_id=status.currentData(), preview=picture)
+    finally:
+        if picture:
+            capture.discard(picture)
 
 
 # -- settings ----------------------------------------------------------------

@@ -16,6 +16,7 @@ script, executing a Write node, the Qt panel. Those need a licensed Nuke.
 
 import json
 import os
+import pathlib
 import sys
 import tempfile
 import types
@@ -102,6 +103,56 @@ def make_stub():
 
     stub.scriptSaveAs = script_save_as
     stub.scriptOpen = script_open
+
+    # Enough of the node API for a snapshot: a Write built with nuke.nodes,
+    # executed for one frame, then deleted.
+    stub.selected = []
+    stub.viewer_input = None
+    stub.created = []
+    stub.deleted = []
+    stub.executed = []
+    stub.frame = lambda: 1001
+
+    class StubNode:
+        def __init__(self, name="Node1", **knobs):
+            self._name = name
+            self.knobs = dict(knobs)
+
+        def name(self):
+            return self._name
+
+        def input(self, index):
+            return stub.viewer_input
+
+    class Nodes:
+        @staticmethod
+        def Write(**knobs):
+            node = StubNode("Write1", **knobs)
+            stub.created.append(node)
+            return node
+
+    def execute(node, first, last):
+        stub.executed.append((node, first, last))
+        path = node.knobs.get("file", "")
+        if path:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"rendered png bytes")
+
+    class Viewer:
+        @staticmethod
+        def node():
+            return StubNode("Viewer1")
+
+        @staticmethod
+        def activeInput():
+            return 0
+
+    stub.nodes = Nodes()
+    stub.selectedNodes = lambda: stub.selected
+    stub.activeViewer = lambda: Viewer() if stub.viewer_input else None
+    stub.execute = execute
+    stub.delete = lambda node: stub.deleted.append(node)
+    stub.StubNode = StubNode
     return stub
 
 
@@ -325,8 +376,73 @@ def main():
     check(thumbnails.fetch(client, without) is None
           and ThumbClient.calls == [],
           "a shot with no preview is never asked for")
+    # Most shots on a young show have no preview yet, so "no thumbnail" is
+    # the common case and has to be distinguishable from a broken feature.
+    check(thumbnails.pixmap(client, without) is None,
+          "a shot with no preview yields no pixmap")
+    source = pathlib.Path(REPO / "nuke" / "BB_pipeline_nuke" / "browser.py").read_text(
+        encoding="utf-8")
+    check("no thumbnail in Kitsu" in source,
+          "and the browser says so rather than going blank")
+
     thumbnails.clear()
     check(not thumbnails._cache, "the cache empties on clear")
+
+    # -- snapshots, which is how a comp gets a thumbnail at all ---------------
+    from BB_pipeline_nuke import capture
+
+    check(capture.source_node() is None,
+          "nothing selected and no viewer means nothing to snapshot")
+    check(capture.snapshot() is None, "and no snapshot is attempted")
+    check(capture.describe() == "", "and the dialog is told there is nothing")
+
+    node = nuke.StubNode("Merge1")
+    nuke.selected = [node]
+    check(capture.source_node() is node, "one selected node is the source")
+    check(capture.describe() == "Merge1", "and the dialog names it")
+
+    picture = capture.snapshot(frame=1005)
+    check(picture is not None and Path(picture).is_file(),
+          "a snapshot renders a file (%s)" % picture)
+    span = str(nuke.executed[-1][1:]) if nuke.executed else "none"
+    check(nuke.executed and nuke.executed[-1][1:] == (1005, 1005),
+          "one frame only (%s)" % span)
+    written = nuke.created[-1].knobs
+    check(written.get("file_type") == "png", "as a PNG")
+    check(written.get("colorspace") == capture.REVIEW_COLORSPACE,
+          "written through sRGB, or a linear comp arrives flat (%s)"
+          % written.get("colorspace"))
+    check(nuke.deleted and nuke.deleted[-1] is nuke.created[-1],
+          "and the Write node is removed again")
+    check(nuke.created[-1].knobs.get("inputs") == [node],
+          "wired to the source rather than to the selection")
+
+    # Two selected nodes is ambiguous, so it falls back to the Viewer.
+    nuke.selected = [node, nuke.StubNode("Merge2")]
+    nuke.viewer_input = nuke.StubNode("FromViewer")
+    check(capture.describe() == "FromViewer",
+          "an ambiguous selection defers to the Viewer (%s)" % capture.describe())
+    nuke.selected = [node]
+
+    # -- a snapshot reaches Kitsu through the shared call ---------------------
+    class PreviewClient(StubClient):
+        published = []
+
+        def publish_preview(self, task_id, file_path, comment="",
+                            task_status_id=None, normalize=False, log=None):
+            PreviewClient.published.append((task_id, file_path, comment))
+            return {"comment": {"id": "c1"}, "preview": {"id": "p1"}}
+
+    state.client = PreviewClient()
+    note = publish.send(context, created, comment="with a picture",
+                        task_status_id="st9", preview=picture)
+    check(PreviewClient.published, "a preview goes through publish_preview")
+    check(PreviewClient.published[-1][1] == picture, "with the rendered frame")
+    check("snapshot" in state.message, "and the message says so (%r)" % state.message)
+
+    capture.discard(picture)
+    check(not Path(picture).exists(), "the temporary frame is cleaned up")
+    state.client = StubClient()
 
     # -- the menu -------------------------------------------------------------
     check(package.MENU == "Kitsu", "the menu is called Kitsu")
