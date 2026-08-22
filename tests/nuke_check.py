@@ -192,6 +192,32 @@ def make_stub():
     class TabKnob(StubKnob):
         pass
 
+    class StubMenu:
+        def __init__(self, name="root"):
+            self._name = name
+            self.commands = []
+            self.menus = {}
+
+        def addMenu(self, name, **kwargs):
+            self.menus.setdefault(name, StubMenu(name))
+            return self.menus[name]
+
+        def addCommand(self, name, command="", shortcut=None):
+            self.commands.append((name, command, shortcut))
+
+        def addSeparator(self):
+            pass
+
+        def items(self):
+            return []
+
+    stub.menus = {}
+
+    def menu(which):
+        stub.menus.setdefault(which, StubMenu(which))
+        return stub.menus[which]
+
+    stub.menu = menu
     stub.Tab_Knob = TabKnob
     stub.Text_Knob = StubKnob
     stub.PyScript_Knob = lambda name, label="", command="": StubKnob(name, label)
@@ -576,6 +602,50 @@ def main():
           "printf patterns glob")
     check(nuke_review.as_glob("a/b_v001.####.exr") == "a/b_v001.*.exr",
           "and so do hashes")
+
+    # -- the three things reported from the first real use ---------------------
+    stamp.write(context.at_version(4))
+    nuke.selected = []
+    fresh = writenode.create()
+
+    check(fresh.knobs.get("create_directories") is True,
+          "create_directories is on, so a first render does not fail on a "
+          "missing folder")
+
+    package.install_menu()
+    nodes_menu = nuke.menu("Nodes").menus.get(package.MENU)
+    check(nodes_menu is not None,
+          "the node is registered in the Nodes menu, which is what Tab searches")
+    check(any(name == "Kitsu Write" for name, _c, _s in nodes_menu.commands),
+          "under a findable name (%s)"
+          % [n for n, _c, _s in (nodes_menu.commands if nodes_menu else [])])
+
+    # evaluate() on a File_Knob resolves to the *current* frame, so using it
+    # for a glob finds nothing unless the playhead happens to sit on a
+    # rendered frame. That is what made a finished render look unrendered.
+    written = fresh.knob("file").value()
+    fresh.knob("file")._value = written
+    concrete = written.replace("%04d", "9999")
+    fresh._objects["file"]._value = written
+
+    check(nuke_review.has_frame_pattern(written),
+          "the raw knob value keeps its frame pattern")
+    check(not nuke_review.has_frame_pattern(concrete),
+          "an evaluated one does not")
+    check(writenode.pattern_of(fresh) == written,
+          "so pattern_of returns the pattern, not one frame")
+
+    folder2 = Path(written).parent
+    folder2.mkdir(parents=True, exist_ok=True)
+    stem2 = Path(written).name.replace("%04d", "%d")
+    for frame in (1001, 1002):
+        (folder2 / (stem2 % frame)).write_bytes(b"exr")
+    through_pattern = nuke_review.rendered_frames(writenode.pattern_of(fresh))
+    through_evaluated = nuke_review.rendered_frames(concrete)
+    check(len(through_pattern) >= 2,
+          "and the rendered frames are found through it (%d)" % len(through_pattern))
+    check(through_evaluated == [],
+          "where the evaluated path finds nothing, which was the bug")
 
     # -- the menu -------------------------------------------------------------
     check(package.MENU == "Kitsu", "the menu is called Kitsu")

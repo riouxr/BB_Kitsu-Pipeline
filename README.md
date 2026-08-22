@@ -374,8 +374,9 @@ plate, so writing one in would override a decision the artist made on purpose.
 
 ### The Kitsu Write node
 
-`Kitsu ▸ Create Write Node` makes an **ordinary Nuke Write** with a Kitsu tab
-added — not a gizmo wrapping one, so every native setting stays where a comper
+Press **Tab** in the node graph and type *Kitsu Write*, or use
+`Kitsu ▸ Create Write Node` (Ctrl+Alt+W). It makes an **ordinary Nuke Write**
+with a Kitsu tab added — not a gizmo wrapping one, so every native setting stays where a comper
 expects it. A Write whose usual controls are out of reach just gets replaced
 with a normal Write, and then the pipeline loses track of the render entirely.
 

@@ -37,6 +37,11 @@ def _nuke():
     return nuke
 
 
+def has_frame_pattern(path):
+    """True when a path carries a frame placeholder rather than one frame."""
+    return bool(path) and bool(PRINTF.search(path) or HASHES.search(path))
+
+
 def as_glob(path):
     '''A file pattern turned into something glob can match.'''
     pattern = PRINTF.sub('*', path)
@@ -131,7 +136,9 @@ def submit(node, comment='', task_status_id=None):
     if blocked:
         return blocked
 
-    path = node.knob('file').evaluate() or node.knob('file').value()
+    from . import writenode
+
+    path = writenode.pattern_of(node)
     if not path:
         return 'this Write has no output path yet'
 

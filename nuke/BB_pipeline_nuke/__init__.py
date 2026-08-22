@@ -46,11 +46,22 @@ def install_menu():
 
     menu.addCommand('Browser...', _run('open_browser()'), 'ctrl+alt+b')
     menu.addSeparator()
-    menu.addCommand('Create Write Node', _run('create_write()'), 'ctrl+alt+w')
+    menu.addCommand('Create Write Node', _run('create_write()'))
     menu.addCommand('Save Next Version', _run('save_next_version()'), 'ctrl+alt+s')
     menu.addCommand('Update Kitsu...', _run('update_kitsu()'))
     menu.addSeparator()
     menu.addCommand('Settings...', _run('open_settings()'))
+
+    # Also in the node menu, which is what the Tab key searches. A node that
+    # cannot be made the way every other node is made will not get used.
+    nodes = nuke.menu('Nodes')
+    kitsu_nodes = nodes.addMenu(MENU)
+    for item in list(kitsu_nodes.items()):
+        try:
+            kitsu_nodes.removeItem(item.name())
+        except Exception:
+            pass
+    kitsu_nodes.addCommand('Kitsu Write', _run('create_write()'), 'ctrl+alt+w')
 
     # Printed so it is possible to tell which build Nuke actually loaded -
     # Nuke caches imported modules, so an unrestarted session runs old code
@@ -121,9 +132,9 @@ def write_publish(node):
     """Build a review movie from what this Write rendered, and send it."""
     import nuke
 
-    from . import browser, review
+    from . import browser, review, writenode
 
-    path = node.knob('file').evaluate() or node.knob('file').value()
+    path = writenode.pattern_of(node)
     found = review.rendered_frames(path)
     if not found:
         nuke.message('Nothing rendered there yet:' + chr(10) + chr(10) + str(path))

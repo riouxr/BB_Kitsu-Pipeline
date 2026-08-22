@@ -108,7 +108,8 @@ def create(stream='main'):
     except Exception:
         selected = None
 
-    knobs = {'file': path, 'file_type': 'exr'}
+    knobs = {'file': path, 'file_type': 'exr',
+             'create_directories': True}
     node = (nuke.nodes.Write(inputs=[selected], **knobs) if selected
             else nuke.nodes.Write(**knobs))
     node.setName('KitsuWrite1', uncollide=True)
@@ -144,13 +145,39 @@ def _add_tab(node, stream, entity_context):
     node.addKnob(note)
 
 
+def pattern_of(node):
+    """The Write's path as a frame *pattern*.
+
+    Deliberately the knob's raw value rather than ``evaluate()``. Evaluating a
+    File_Knob substitutes the current frame, so it hands back one concrete
+    filename - which globs to nothing whenever the playhead is not sitting on
+    a frame that was rendered. That is what made a finished render report
+    "nothing rendered yet".
+    """
+    knob = node.knob('file')
+    if knob is None:
+        return ''
+
+    raw = knob.value() or ''
+    from . import review
+    if review.has_frame_pattern(raw):
+        return raw
+
+    # No placeholder in the raw value - an expression, or a single-file
+    # output. Evaluating is the right answer for those.
+    try:
+        return knob.evaluate() or raw
+    except Exception:
+        return raw
+
+
 def add_read(node):
     '''Create a Read of what this Write rendered, wired below it.'''
     nuke = _nuke()
 
     from . import review
 
-    path = node.knob('file').evaluate() or node.knob('file').value()
+    path = pattern_of(node)
     if not path:
         nuke.message('This Write has no output path yet - press Set Output Path')
         return None
