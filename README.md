@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.1.0.zip`.
+`dist/BB_pipeline-0.2.1.zip`.
 
 ### Develop
 
@@ -115,8 +115,31 @@ It is a popup, not a dialog: the buttons act as soon as they are clicked, so
 there is nothing for an OK to confirm, and clicking away in the viewport
 dismisses it. Anything that replaces the open file — Open, New, Append, Link —
 waits for the popup to close first, because loading a file frees the data the
-popup is drawn from. The Kitsu thumbnail of whatever is selected is shown above the
-buttons, so a shot or asset can be recognised before anything is opened.
+popup is drawn from.
+
+**Two panes, not three columns.** The navigation is one expandable tree on the
+left — sequence ▸ shot ▸ task, or asset type ▸ asset ▸ task — and the versions
+are on the right, each with a picture. Prism spends a third column on
+Departments and Tasks because it does not know which application is asking;
+this does, so Blender never lists a Compositing task and Nuke never lists
+Lighting, and that column has nothing left to say.
+
+Tasks hang under the selected entity only. Kitsu serves tasks per entity, so a
+tree that showed them under every shot would cost one request per shot on
+every redraw — selecting a shot is what loads them.
+
+Expanding a branch deliberately selects nothing. A dropdown could only ever be
+*changed*, so browsing and choosing were one act; a tree lets you open a branch
+just to look inside it, and treating that as a selection rewrote the bookmark
+to a sequence the remembered shot did not belong to.
+
+Under the tree sits one line — frame range, rate and resolution. Prism gives
+this a panel with a thumbnail slot that is empty on most shots. It is three
+numbers.
+
+The add-on version is shown in the browser header, read from the manifest so it
+cannot disagree with what the Extensions list reports. A junctioned add-on and
+a stale copy look identical from the menu otherwise.
 
 The browser **comes back where you left it** — tab, project, sequence and
 shot or asset type and asset, and the task. The bookmark lives in the add-on
@@ -141,6 +164,25 @@ Append and Link hand straight off to `wm.append` / `wm.link`, because that is
 the only file browser that can descend into a `.blend` and list the scenes,
 collections and objects inside. It opens already inside the file, in thumbnail
 mode.
+
+### The picture on each version
+
+Every version row carries an image. A version saved by this pipeline gets its
+own, written next to the scene files in a `.thumbs` folder as it is saved.
+Anything older falls back to the Kitsu thumbnail for the shot or asset, so a
+row is recognisable even before it has been re-saved.
+
+Kitsu cannot supply a per-version picture, and this is worth stating because it
+looks as though it should. Its preview files are numbered by a **revision**
+counter that counts publishes *and* review comments — measured against a real
+project, revisions 1–4 belonged to comments like "render test" and "reformat",
+while the comments naming `_v006.nk` carried no preview at all. Revision 3 is
+neither version 3 nor reliably attached to any version. So the picture of a
+version has to be taken when the version is saved.
+
+`.thumbs` is a dot-folder beside the work files rather than a parallel tree: it
+moves with the work when a shot is relocated, and sync tools skip dot-folders
+by default.
 
 ### Only the tasks that belong to this application
 
@@ -358,7 +400,7 @@ there is nothing to type.
 
 | | |
 |---|---|
-| **Browser…** | project ▸ sequence ▸ shot ▸ task ▸ version, with the shot's Kitsu thumbnail |
+| **Browser…** | a shot tree on the left, versions with pictures on the right |
 | **Import into Current Script** | paste another version's nodes into the open comp |
 | **Create Write Node** | a Write pointed at this version's render path |
 | **Save Next Version** | version up the open script |
@@ -367,6 +409,18 @@ there is nothing to type.
 **Import into Current Script** is on its own row under the other three: those
 replace what is open, this one adds to it, and a mis-click between the two is
 expensive. It uses `nodePaste`, so the nodes arrive selected and ready to move.
+
+The browser has the same two panes as Blender's — a `QTreeWidget` of sequences,
+shots and compositing tasks on the left, a version list with icons on the
+right, in a splitter you can drag. Shot facts sit under the tree, and the
+version number is in the window title: Nuke caches imported modules, so a
+session that was never restarted runs old code while looking identical. If the
+title does not say the version you expect, the module did not reload.
+
+Version pictures work exactly as they do in Blender — see
+[The picture on each version](#the-picture-on-each-version). A shot with no
+Kitsu preview and no saved versions has nothing to show, which is not a
+failure; only some shots on a young show have a preview at all.
 
 Creating a version sets the script's **frame range and fps** from Kitsu. The
 format is deliberately left alone: a comp's format usually comes from its
@@ -536,6 +590,10 @@ render_root = "I:/PizzaHunt/_renders"
 python -m unittest discover -s tests -v
 ```
 
+`--factory-startup` matters: without it an installed copy of the add-on is
+enabled alongside the one under test, and the two fight over the same class
+names.
+
 The Blender side has an integration test that stubs the Kitsu session, so the
 create / open / increment loop runs offline:
 
@@ -543,7 +601,26 @@ create / open / increment loop runs offline:
 blender --background --factory-startup --python tests/blender_check.py
 ```
 
-Verified against Blender 4.2, 4.5 and 5.2.
+The Nuke side runs under Nuke's *own* interpreter with `nuke` stubbed, so what
+is proved is that the pipeline works in the Python that Nuke ships — no render
+licence needed:
+
+```bash
+"C:/Program Files/Nuke16.0v6/python.exe" tests/nuke_check.py
+```
+
+Three checks in `test_core.py` are static rather than behavioural, because the
+bugs they catch only surface when a line runs — and Blender stops drawing a
+panel when its draw callback raises, reporting nothing:
+
+- an attribute read off a sibling module that the module does not define;
+- a `self.<name>` a class reads but never assigns;
+- the version declared in three files that cannot import each other.
+
+Each was written after the bug it describes reached a running DCC, and each is
+verified to fail when that bug is put back.
+
+Verified against Blender 4.2, 4.5, 5.1 and 5.2, and Nuke 16.0v6.
 
 ## Licence
 
