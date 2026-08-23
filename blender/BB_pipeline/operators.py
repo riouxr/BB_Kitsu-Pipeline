@@ -280,6 +280,11 @@ class BB_OT_browser(Operator):
         # whenever the project was first picked.
         fetch.refresh_project(context)
         fetch.refresh_workfiles(context)
+        # The bookmark restores the selection, but the tree opens collapsed,
+        # so without this the remembered shot is sitting inside a branch the
+        # artist cannot see - which looks exactly like nothing was
+        # remembered at all.
+        treeview.reveal(properties.get(context))
         # A popup rather than a dialog: the buttons in it do the work
         # themselves, so there is nothing for an OK to confirm, and clicking
         # away in the viewport dismisses it.

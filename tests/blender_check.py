@@ -788,6 +788,17 @@ def main():
               "a collapsed tree shows sequences only (%s)"
               % [row[0] for row in rows])
 
+        # The bookmark restores the properties, but a tree that opens
+        # collapsed hides the restored shot inside a closed branch - which
+        # reads as the browser having forgotten where it was.
+        treeview.reveal(props)
+        revealed = treeview.rows(props)
+        check(any(row[0] == "entity" and row[1] == "k1" for row in revealed),
+              "opening reveals the remembered shot")
+        check(any(row[0] == "task" and row[4] for row in revealed),
+              "and its remembered task")
+        treeview.reset()
+
         treeview.toggle("q1")
         rows = treeview.rows(props)
         kinds = [row[0] for row in rows]
