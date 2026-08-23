@@ -111,15 +111,22 @@ def _store_thumb(context, entity_context):
 
     picture = capture.viewport_png(context)
     if not picture:
+        print('BB Kitsu Pipeline: no viewport to grab a thumbnail from')
         return
+
+    # Reported rather than swallowed. A thumbnail that silently fails to
+    # write is indistinguishable from a version that simply has not been
+    # saved yet, which is exactly how a wrong config call went unnoticed.
     try:
-        workfiles.save_thumb(entity_context, 'blender', picture,
-                             entity_context.version,
-                             session.config_for(context))
-    except Exception:
-        pass
+        stored = workfiles.save_thumb(entity_context, 'blender', picture,
+                                      entity_context.version,
+                                      prefs.config(context))
+        if stored is None:
+            print('BB Kitsu Pipeline: could not store the version thumbnail')
+    except Exception as error:
+        print('BB Kitsu Pipeline: version thumbnail failed (%s)' % error)
     finally:
-        capture._discard(picture)
+        capture.discard(picture)
 
 
 def _ask_to_publish(context, path):
@@ -374,7 +381,7 @@ class BB_OT_browser(Operator):
             empty.enabled = False
             empty.label(text='no versions yet', icon='FILE_BLANK')
         else:
-            config = session.config_for(context)
+            config = prefs.config(context)
             column = listing.column(align=True)
             for version, path in reversed(state.workfiles):
                 self._draw_version_row(column, props, entity_context, version,

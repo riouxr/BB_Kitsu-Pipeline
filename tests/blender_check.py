@@ -705,6 +705,57 @@ def main():
               "the startup connect does not reschedule itself")
         session.state.client = StubClient()
 
+        # -- version thumbnails ------------------------------------------------
+        # The browser shows one picture per version, written on save. This
+        # went unnoticed for a while because the store swallowed its own
+        # errors while calling an accessor that only exists on the Nuke side,
+        # so what is checked here is that a thumbnail actually reaches the
+        # disk - not merely that the call returned.
+        from BB_pipeline import operators, prefs as bb_prefs, thumbnails
+        from BB_core import workfiles as core_workfiles
+
+        # A real 1x1 PNG, so the loader has something valid to open.
+        ONE_PIXEL = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+            "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+        entity_context = fetch.current_context(bpy.context)
+        check(entity_context is not None, "a context to hang a thumbnail on")
+
+        grabbed = Path(tempfile.mkdtemp(prefix="bb_grab_")) / "grab.png"
+        grabbed.write_bytes(ONE_PIXEL)
+
+        versioned = entity_context.at_version(3)
+        real_grab = operators.capture.viewport_png
+        operators.capture.viewport_png = lambda context=None, **kw: str(grabbed)
+        try:
+            operators._store_thumb(bpy.context, versioned)
+        finally:
+            operators.capture.viewport_png = real_grab
+
+        config = bb_prefs.config(bpy.context)
+        expected = core_workfiles.thumb_file(versioned, "blender", 3, config)
+        check(expected.is_file(),
+              "saving writes the version thumbnail (%s)" % expected.name)
+        check(expected.parent.name == core_workfiles.THUMB_DIR,
+              "into %s beside the scene files" % core_workfiles.THUMB_DIR)
+
+        # The browser reads it back through the same path it was written to.
+        # Membership rather than a non-zero icon id, because Blender
+        # allocates the id lazily and it is legitimately still 0 right after
+        # a load - the same reason icon_id is never cached.
+        thumbnails.version_icon(expected)
+        check(any(str(expected) in key for key in thumbnails._loaded),
+              "and the browser loads it into the preview collection")
+
+        # A version nothing was saved for has no picture, and that is not an
+        # error - it is what an older version legitimately looks like.
+        missing = core_workfiles.thumb_file(entity_context.at_version(99),
+                                            "blender", 99, config)
+        check(not missing.is_file(), "a version never saved has no thumbnail")
+        check(thumbnails.version_icon(missing) == 0,
+              "which the browser reports as no icon rather than raising")
+
         # -- the browser tree -----------------------------------------------
         # The tree replaced three dropdowns, so what used to be guaranteed by
         # an enum - that you cannot reach a task belonging to another shot -

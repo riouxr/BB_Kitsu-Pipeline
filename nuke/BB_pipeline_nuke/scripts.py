@@ -111,11 +111,33 @@ def _store_thumb(entity_context, version, config=None):
     """
     from . import capture
 
-    picture, _problem = capture.snapshot()
+    nuke = _nuke()
+
+    # Derived here when the caller has none, so a path that forgets to pass
+    # it cannot quietly write the picture under the default root instead of
+    # the project's.
+    if config is None:
+        try:
+            config = session.config_for(entity_context)
+        except Exception:
+            config = None
+
+    picture, problem = capture.snapshot()
     if not picture:
+        nuke.tprint('BB Kitsu Pipeline: no version thumbnail (%s)' % problem)
         return
+
+    # Reported rather than swallowed. A thumbnail that silently fails to
+    # write is indistinguishable from a version that simply has not been
+    # saved yet.
     try:
-        workfiles.save_thumb(entity_context, 'nuke', picture, version, config)
+        stored = workfiles.save_thumb(entity_context, 'nuke', picture, version,
+                                      config)
+        if stored is None:
+            nuke.tprint('BB Kitsu Pipeline: could not store the version '
+                        'thumbnail')
+    except Exception as error:
+        nuke.tprint('BB Kitsu Pipeline: version thumbnail failed (%s)' % error)
     finally:
         capture.discard(picture)
 
