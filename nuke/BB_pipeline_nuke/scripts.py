@@ -97,7 +97,27 @@ def create_version(entity_context, from_current=False):
 
     nuke.scriptSaveAs(str(path), overwrite=1)
     state.context = stamped
+    _store_thumb(stamped, stamped.version)
     return str(path)
+
+
+def _store_thumb(entity_context, version, config=None):
+    """Write the picture the browser shows for this version.
+
+    Taken here rather than read back from Kitsu because Kitsu has no notion
+    of a work version: its preview files are numbered by a revision counter
+    that counts publishes and review comments, so nothing there maps back to
+    v007. Failing is not an error - the browser just shows a blank slot.
+    """
+    from . import capture
+
+    picture, _problem = capture.snapshot()
+    if not picture:
+        return
+    try:
+        workfiles.save_thumb(entity_context, 'nuke', picture, version, config)
+    finally:
+        capture.discard(picture)
 
 
 def save_next_version():
@@ -129,6 +149,7 @@ def save_next_version():
     os.makedirs(str(path.parent), exist_ok=True)
     nuke.scriptSaveAs(str(path), overwrite=1)
     state.context = stamped
+    _store_thumb(stamped, version, config)
     return str(path)
 
 

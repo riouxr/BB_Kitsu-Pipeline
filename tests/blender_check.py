@@ -705,6 +705,81 @@ def main():
               "the startup connect does not reschedule itself")
         session.state.client = StubClient()
 
+        # -- the browser tree -----------------------------------------------
+        # The tree replaced three dropdowns, so what used to be guaranteed by
+        # an enum - that you cannot reach a task belonging to another shot -
+        # is now this module's job. Seeded here rather than relying on what
+        # earlier sections left behind.
+        from BB_pipeline import treeview
+
+        kept = (session.state.sequences, session.state.shots, session.state.tasks)
+        session.state.sequences = [
+            {"id": "q1", "name": "sc01", "parent_id": "p1"},
+            {"id": "q2", "name": "sc02", "parent_id": "p1"},
+        ]
+        session.state.shots = [
+            {"id": "k1", "name": "sh01", "parent_id": "q1"},
+            {"id": "k2", "name": "sh02", "parent_id": "q1"},
+            {"id": "k3", "name": "sh03", "parent_id": "q2"},
+        ]
+        session.state.tasks = [TASK, COMP_TASK]
+
+        props = properties.get()
+        with properties.suspend_updates():
+            props.entity_type = "SHOT"
+            props.sequence = "q1"
+            props.shot = "k1"
+            props.task = TASK["id"]
+
+        treeview.reset()
+        rows = treeview.rows(props)
+        check([row[0] for row in rows] == ["group", "group"],
+              "a collapsed tree shows sequences only (%s)"
+              % [row[0] for row in rows])
+
+        treeview.toggle("q1")
+        rows = treeview.rows(props)
+        kinds = [row[0] for row in rows]
+        check(kinds.count("group") == 2, "every sequence is still listed")
+        check(kinds.count("entity") == 2,
+              "expanding a sequence reveals its own shots only (%d)"
+              % kinds.count("entity"))
+
+        depth_of = {row[0]: row[3] for row in rows}
+        check(depth_of.get("group") == 0 and depth_of.get("entity") == 1,
+              "shots are indented under their sequence")
+
+        tasks = [row for row in rows if row[0] == "task"]
+        check(len(tasks) == len(session.state.tasks) and all(r[3] == 2 for r in tasks),
+              "the selected shot carries its tasks, indented (%d)" % len(tasks))
+
+        names = [row[2] for row in rows if row[0] == "entity"]
+        check(names == ["sh01", "sh02"],
+              "sh03 stays under sc02 where it belongs (%s)" % names)
+
+        selected = [row for row in rows if row[4]]
+        check(any(row[0] == "entity" and row[1] == "k1" for row in selected),
+              "the current shot draws as selected")
+
+        treeview.toggle("q1")
+        check(all(row[0] == "group" for row in treeview.rows(props)),
+              "collapsing puts the shots away again")
+
+        # A version row reuses the same operator, so it has to reach the
+        # property the Open button reads.
+        session.state.workfiles = [(1, work_root / "v001.blend"),
+                                   (2, work_root / "v002.blend")]
+        treeview._pick(props, "version", "2")
+        check(props.version == "2",
+              "picking a version selects it (%s)" % props.version)
+
+        # Put back what the later sections expect to find.
+        treeview.reset()
+        session.state.sequences, session.state.shots, session.state.tasks = kept
+        with properties.suspend_updates():
+            props.sequence = "s1"
+            props.shot = "sh1"
+
         # -- the top bar menu ---------------------------------------------------
         from BB_pipeline import menu
         check(hasattr(_bpy.types, "BB_MT_main"), "Kitsu menu registered")

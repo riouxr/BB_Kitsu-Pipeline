@@ -85,6 +85,39 @@ def fetch(client, entity):
     return icon_id(entity)
 
 
+def version_icon(path):
+    """The icon for a work version's sidecar thumbnail, or 0 when it has none.
+
+    Keyed by the file's path and modification time, so re-saving a version
+    replaces the picture rather than showing the one from last time. Loading
+    is cheap and local - a file already on disk - so unlike the Kitsu
+    thumbnails this can happen straight from a draw callback.
+    """
+    if not path:
+        return 0
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        return 0
+
+    key = '%s@%d' % (path, stamp)
+    if key in _missing:
+        return 0
+
+    if key not in _loaded:
+        try:
+            _ensure_collection().load(key, str(path), 'IMAGE')
+            _loaded.add(key)
+        except Exception:
+            _missing.add(key)
+            return 0
+
+    try:
+        return _collection[key].icon_id
+    except KeyError:
+        return 0
+
+
 def draw(layout, entity, scale=6.0):
     '''Draw the entity's thumbnail, or nothing when it has none.'''
     icon = icon_id(entity)

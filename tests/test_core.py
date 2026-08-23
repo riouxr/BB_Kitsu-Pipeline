@@ -773,5 +773,84 @@ class TestExplain(unittest.TestCase):
         self.assertIn("HTTP 500", self.message(KitsuError("data/x failed: HTTP 500")))
 
 
+class TestVersionThumbnails(unittest.TestCase):
+    """The picture the browser shows beside each version.
+
+    Kitsu cannot answer this. Its preview files are numbered by a revision
+    counter that counts publishes and review comments, so revision 3 is
+    neither version 3 nor reliably tied to any version - measured against a
+    real project. The picture therefore has to be written on save.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.config = Config()
+        self.config.paths["work_root"] = str(self.root)
+        self.context = sample_context()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def source(self, name="grab.png"):
+        path = self.root / name
+        path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return path
+
+    def test_thumb_sits_beside_the_work_file(self):
+        work = workfiles.work_file(self.context, "blender", 7, self.config)
+        thumb = workfiles.thumb_file(self.context, "blender", 7, self.config)
+        self.assertEqual(thumb.parent.parent, work.parent)
+        self.assertEqual(thumb.parent.name, workfiles.THUMB_DIR)
+
+    def test_one_thumb_per_version(self):
+        first = workfiles.thumb_file(self.context, "blender", 1, self.config)
+        second = workfiles.thumb_file(self.context, "blender", 2, self.config)
+        self.assertNotEqual(first.name, second.name)
+        self.assertTrue(first.name.endswith(".png"))
+
+    def test_the_dcc_does_not_change_the_name(self):
+        # One picture per version, whichever application saved it - the
+        # browser looks the version up, not the application.
+        blender = workfiles.thumb_file(self.context, "blender", 3, self.config)
+        nuke = workfiles.thumb_file(self.context, "nuke", 3, self.config)
+        self.assertEqual(blender, nuke)
+
+    def test_saving_copies_the_picture_into_place(self):
+        stored = workfiles.save_thumb(self.context, "blender", self.source(),
+                                      4, self.config)
+        self.assertIsNotNone(stored)
+        self.assertTrue(stored.is_file())
+        self.assertEqual(stored,
+                         workfiles.thumb_file(self.context, "blender", 4,
+                                              self.config))
+
+    def test_saving_makes_the_folder(self):
+        target = workfiles.thumb_file(self.context, "blender", 5, self.config)
+        self.assertFalse(target.parent.exists())
+        workfiles.save_thumb(self.context, "blender", self.source(), 5,
+                             self.config)
+        self.assertTrue(target.is_file())
+
+    def test_a_missing_source_is_not_an_error(self):
+        # A save must never fail because the thumbnail could not be grabbed.
+        self.assertIsNone(
+            workfiles.save_thumb(self.context, "blender",
+                                 self.root / "nothing.png", 6, self.config))
+
+    def test_no_source_is_not_an_error(self):
+        self.assertIsNone(
+            workfiles.save_thumb(self.context, "blender", None, 6, self.config))
+
+    def test_resaving_replaces_the_picture(self):
+        workfiles.save_thumb(self.context, "blender", self.source("a.png"),
+                             8, self.config)
+        newer = self.root / "b.png"
+        newer.write_bytes(b"\x89PNG\r\n\x1a\nNEWER")
+        stored = workfiles.save_thumb(self.context, "blender", newer, 8,
+                                      self.config)
+        self.assertTrue(stored.read_bytes().endswith(b"NEWER"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

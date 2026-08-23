@@ -17,9 +17,11 @@ core.bootstrap()
 
 from . import (autoconnect, capture, handlers, menu,  # noqa: E402,F401
                operators, prefs, properties, publish, render,
-               review, reviewpanel, scenesync, session, thumbnails)
+               review, reviewpanel, scenesync, session, thumbnails,
+               treeview)
 
-_modules = (prefs, properties, thumbnails, operators, menu, reviewpanel)
+_modules = (prefs, properties, thumbnails, treeview, operators, menu,
+            reviewpanel)
 
 
 def register():

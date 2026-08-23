@@ -23,7 +23,8 @@ from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator
 
 from . import (capture, fetch, handlers, prefs, properties, publish,
-               render, review, scenesync, session, stamp, thumbnails)
+               render, review, scenesync, session, stamp, thumbnails,
+               treeview)
 
 
 def _later(function):
@@ -67,7 +68,7 @@ def _create_version(shot_context, path, from_current):
 
     stamp.write(bpy.context.scene, shot_context)
     framing = scenesync.on_create(context, shot_context)
-    _save_with_previews(context, path)
+    _save_with_previews(context, path, shot_context)
 
     session.state.context = shot_context
     handlers.restore_selection(shot_context)
@@ -78,7 +79,7 @@ def _create_version(shot_context, path, from_current):
     _ask_to_publish(bpy.context, path)
 
 
-def _save_with_previews(context, path):
+def _save_with_previews(context, path, entity_context=None):
     """Save, with the icons the Append and Link browsers will want.
 
     Datablock previews are generated before the save so they end up inside the
@@ -90,6 +91,35 @@ def _save_with_previews(context, path):
 
     with capture.embedded_preview():
         bpy.ops.wm.save_as_mainfile(filepath=str(path))
+
+    _store_thumb(context, entity_context)
+
+
+def _store_thumb(context, entity_context):
+    """Write the picture the browser shows for this version.
+
+    Blender embeds a thumbnail in the .blend, but nothing can read another
+    file's embedded preview without opening it, so the browser needs its own
+    copy beside the file. Kitsu cannot supply one either: its preview files
+    are numbered by a revision counter that counts publishes and review
+    comments, so none of them maps back to v007.
+    """
+    if entity_context is None:
+        return
+
+    from BB_core import workfiles
+
+    picture = capture.viewport_png(context)
+    if not picture:
+        return
+    try:
+        workfiles.save_thumb(entity_context, 'blender', picture,
+                             entity_context.version,
+                             session.config_for(context))
+    except Exception:
+        pass
+    finally:
+        capture._discard(picture)
 
 
 def _ask_to_publish(context, path):
@@ -215,9 +245,14 @@ class BB_OT_forget_password(Operator):
 #
 # Half the box width, not all of it. Kitsu serves a small thumbnail, and
 # blowing it up to the full 460 only magnifies the pixels.
-BROWSER_WIDTH = 460
+BROWSER_WIDTH = 760
 BOX_PADDING = 24
 PREVIEW_SCALE = (BROWSER_WIDTH - BOX_PADDING) / 20.0 / 2.0
+
+# template_icon measures its scale in UI units of ~20px, so this is a row a
+# little over two lines tall - big enough to recognise a frame, small enough
+# that ten versions still fit without scrolling.
+VERSION_ICON_SCALE = 2.4
 
 
 class BB_OT_browser(Operator):
@@ -248,99 +283,151 @@ class BB_OT_browser(Operator):
         state = session.state
 
         layout = self.layout
-        layout.use_property_split = True
+        layout.use_property_split = False
         layout.use_property_decorate = False
 
-        layout.prop(props, 'project')
+        # One header line: which show, and which of its two trees.
+        header = layout.row(align=True)
+        header.prop(props, 'project', text='')
+        tabs = header.row(align=True)
+        tabs.prop(props, 'entity_type', expand=True)
 
-        # Two tabs, because a Kitsu project holds two trees and the middle two
-        # selectors name different things in each. Unlabelled and untabbed
-        # they read as one flat chain.
-        layout.separator()
-        row = layout.row()
-        row.use_property_split = False
-        row.prop(props, 'entity_type', expand=True)
+        split = layout.split(factor=0.38)
 
-        box = layout.box()
-        column = box.column()
-        column.use_property_split = True
+        # -- left: the tree ---------------------------------------------------
+        left = split.column()
+        tree_box = left.box()
+        treeview.draw(tree_box, props)
+        self._draw_entity_facts(left, props)
 
-        if props.is_asset:
-            column.enabled = bool(state.asset_types)
-            column.prop(props, 'asset_type')
-            column.prop(props, 'asset')
-        else:
-            column.enabled = bool(state.sequences)
-            column.prop(props, 'sequence')
-            column.prop(props, 'shot')
+        # -- right: the versions ----------------------------------------------
+        right = split.column()
+        entity_context = fetch.current_context(context)
 
-        column = box.column()
-        column.use_property_split = True
-        column.enabled = bool(state.tasks)
-        column.prop(props, 'task')
-
-        # The Kitsu thumbnail for whatever is selected, so the shot or asset
-        # can be recognised before anything is opened.
-        entity = state.entity(props.entity_id, props.is_asset)
-        if not thumbnails.draw(box, entity, scale=PREVIEW_SCALE):
-            note = box.row()
-            note.alignment = 'CENTER'
-            note.enabled = False
-            note.label(text='no thumbnail in Kitsu', icon='IMAGE_DATA')
-
-        shot_context = fetch.current_context(context)
-        if shot_context is None:
-            layout.label(text='Pick a project, sequence, shot and task',
-                         icon='INFO')
+        if entity_context is None:
+            note = right.box()
+            note.label(text='Pick a task on the left', icon='INFO')
             return
 
         ready, why = prefs.roots_ready(context)
         if not ready:
-            box = layout.box()
-            box.alert = True
-            box.label(text=why, icon='ERROR')
-            box.label(text='Kitsu > Preferences...')
+            note = right.box()
+            note.alert = True
+            note.label(text=why, icon='ERROR')
+            note.label(text='Kitsu > Preferences...')
             return
 
-        layout.separator()
-
-        has_files = bool(state.workfiles)
-        column = layout.column()
-        column.use_property_split = True
-        column.enabled = has_files
-        column.prop(props, 'version')
-
-        # Buttons that act, rather than a mode to pick and an OK to confirm.
-        # Stacked, because the labels are sentences rather than words and a
-        # row squeezes them into initials.
-        next_version = (state.workfiles[-1][0] + 1) if has_files else 1
-        made = 'Create v%03d' % next_version if not has_files             else 'New v%03d' % next_version
-
-        column = layout.column(align=True)
-
-        open_row = column.row(align=True)
-        open_row.enabled = has_files
-        open_row.operator('bb.open_workfile', text='Open', icon='FILE_FOLDER')
-
-        column.operator('bb.new_workfile', text=made,
-                        icon='FILE_NEW').from_current = False
-        column.operator('bb.new_workfile', text='%s from Current Scene' % made,
-                        icon='DUPLICATE').from_current = True
-
-        layout.separator()
-
-        # Append and Link hand off to Blender's own browser, the only one that
-        # can descend into a .blend.
-        column = layout.column(align=True)
-        column.enabled = has_files
-        column.operator('bb.append_workfile', text='Append', icon='APPEND_BLEND')
-        column.operator('bb.link_workfile', text='Link', icon='LINK_BLEND')
+        self._draw_versions(right, context, props, entity_context)
 
         if state.message:
             row = layout.row()
             row.alert = state.is_error
             row.label(text=state.message,
                       icon='ERROR' if state.is_error else 'INFO')
+
+    def _draw_entity_facts(self, layout, props):
+        '''Range, rate and size for the selection - one line, not a panel.
+
+        Prism gives this a whole box with a thumbnail slot in it, which on a
+        shot with no data is a large area of nothing. It is three numbers.
+        '''
+        from BB_core import frames
+
+        state = session.state
+        entity = state.entity(props.entity_id, props.is_asset)
+        if entity is None:
+            return
+
+        project = state.project(props.project) or {}
+        facts = []
+
+        if not props.is_asset:
+            first, last = frames.frame_range(entity)
+            if first is not None and last is not None:
+                facts.append('%d-%d' % (first, last))
+
+        rate = frames.fps(project, entity)
+        if rate:
+            facts.append('%s fps' % frames.describe(rate))
+
+        size = frames.resolution(project, entity)
+        if size:
+            facts.append('%dx%d' % size)
+
+        if not facts:
+            return
+
+        row = layout.row()
+        row.enabled = False
+        row.label(text=' · '.join(facts))
+
+    def _draw_versions(self, layout, context, props, entity_context):
+        '''One row per version on disk, each with the picture it saved.'''
+        from BB_core import workfiles
+
+        state = session.state
+        has_files = bool(state.workfiles)
+
+        listing = layout.box()
+        if not has_files:
+            empty = listing.row()
+            empty.enabled = False
+            empty.label(text='no versions yet', icon='FILE_BLANK')
+        else:
+            config = session.config_for(context)
+            column = listing.column(align=True)
+            for version, path in reversed(state.workfiles):
+                self._draw_version_row(column, props, entity_context, version,
+                                       path, config, workfiles)
+
+        next_version = (state.workfiles[-1][0] + 1) if has_files else 1
+        made = ('Create v%03d' % next_version if not has_files
+                else 'New v%03d' % next_version)
+
+        buttons = layout.column(align=True)
+        open_row = buttons.row(align=True)
+        open_row.enabled = has_files
+        open_row.operator('bb.open_workfile', text='Open', icon='FILE_FOLDER')
+
+        buttons.operator('bb.new_workfile', text=made,
+                         icon='FILE_NEW').from_current = False
+        buttons.operator('bb.new_workfile', text='%s from Current Scene' % made,
+                         icon='DUPLICATE').from_current = True
+
+        buttons.separator()
+
+        # Append and Link hand off to Blender's own browser, the only one that
+        # can descend into a .blend.
+        linking = buttons.row(align=True)
+        linking.enabled = has_files
+        linking.operator('bb.append_workfile', text='Append', icon='APPEND_BLEND')
+        linking.operator('bb.link_workfile', text='Link', icon='LINK_BLEND')
+
+    def _draw_version_row(self, column, props, entity_context, version, path,
+                          config, workfiles):
+        chosen = props.version == str(version)
+
+        row = column.row(align=True)
+        row.emboss = 'NORMAL' if chosen else 'NONE'
+
+        try:
+            thumb = workfiles.thumb_file(entity_context, 'blender', version,
+                                         config)
+        except Exception:
+            thumb = None
+
+        icon_id = thumbnails.version_icon(thumb) if thumb else 0
+        if icon_id:
+            row.template_icon(icon_value=icon_id, scale=VERSION_ICON_SCALE)
+        else:
+            spacer = row.row()
+            spacer.enabled = False
+            spacer.label(text='', icon='IMAGE_DATA')
+
+        button = row.operator('bb.tree_pick', text='v%03d' % version,
+                              depress=chosen)
+        button.kind = 'version'
+        button.identifier = str(version)
 
     def execute(self, context):
         # Nothing to do on close: the popup's own buttons have already run
@@ -579,7 +666,7 @@ class BB_OT_save_next_version(Operator):
 
         shot_context = shot_context.at_version(version)
         stamp.write(context.scene, shot_context)
-        _save_with_previews(context, path)
+        _save_with_previews(context, path, shot_context)
 
         session.state.context = shot_context
         fetch.refresh_workfiles()

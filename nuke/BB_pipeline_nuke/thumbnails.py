@@ -54,6 +54,27 @@ def pixmap(client, entity, width=220):
     return image
 
 
+def from_file(path, width=96):
+    """A QPixmap for a work version's sidecar thumbnail, or None.
+
+    Kitsu cannot supply this: its preview files are numbered by a revision
+    counter that counts publishes and review comments rather than work
+    versions, so revision 3 is neither version 3 nor reliably attached to any
+    version at all. The picture of a version is written beside it on save.
+    """
+    import os
+
+    if not path or not os.path.isfile(str(path)):
+        return None
+
+    from PySide6 import QtCore, QtGui
+
+    image = QtGui.QPixmap()
+    if not image.load(str(path)):
+        return None
+    return image.scaledToWidth(width, QtCore.Qt.SmoothTransformation)
+
+
 def clear():
     _cache.clear()
     _missing.clear()

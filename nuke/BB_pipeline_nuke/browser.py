@@ -5,12 +5,14 @@ functions that need it so the rest of this package can be exercised by a plain
 interpreter with no Qt at all - which is how it gets tested on a machine with
 no Nuke licence.
 
-Shots only and compositing tasks only, so the cascade is one level shorter
-than Blender's: project, sequence, shot, task, version.
+Shots only and compositing tasks only, which is what lets the whole
+navigation collapse into one tree: a Nuke artist never has a reason to see a
+lighting or FX task, so the department column Prism spends space on has
+nothing left to say.
 '''
 import os
 
-from BB_core import credentials, settings
+from BB_core import credentials, settings, workfiles
 from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
 
 from . import (capture, fetch, publish, review, scripts, session, stamp,
@@ -18,6 +20,7 @@ from . import (capture, fetch, publish, review, scripts, session, stamp,
 
 state = session.state
 
+VERSION_ICON_WIDTH = 96
 TITLE = 'Kitsu Browser'
 
 
@@ -52,36 +55,49 @@ class Browser(object):
 
         self.dialog = QtWidgets.QDialog(_parent())
         self.dialog.setWindowTitle(TITLE)
-        self.dialog.setMinimumWidth(460)
+        self.dialog.resize(880, 540)
 
         layout = QtWidgets.QVBoxLayout(self.dialog)
 
         self.status = QtWidgets.QLabel('')
         self.status.setWordWrap(True)
 
-        form = QtWidgets.QFormLayout()
+        # One header line. The project is the only thing still a dropdown,
+        # because it is the one choice that is not part of the tree.
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(QtWidgets.QLabel('Project'))
         self.project = QtWidgets.QComboBox()
-        self.sequence = QtWidgets.QComboBox()
-        self.shot = QtWidgets.QComboBox()
-        self.task = QtWidgets.QComboBox()
-        form.addRow('Project', self.project)
-        form.addRow('Sequence', self.sequence)
-        form.addRow('Shot', self.shot)
-        form.addRow('Task', self.task)
-        layout.addLayout(form)
+        header.addWidget(self.project, 1)
+        layout.addLayout(header)
 
-        # The shot's Kitsu thumbnail, so it can be recognised before anything
-        # is opened. When there is not one it says so rather than going blank:
-        # most shots on a young show have no preview yet, and silence there is
-        # indistinguishable from the feature being broken.
-        self.thumbnail = QtWidgets.QLabel('')
-        self.thumbnail.setAlignment(QtCore.Qt.AlignCenter)
-        self.thumbnail.setMinimumHeight(24)
-        layout.addWidget(self.thumbnail)
+        panes = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        # -- left: sequence / shot / task, as one tree ------------------------
+        left = QtWidgets.QWidget()
+        left_column = QtWidgets.QVBoxLayout(left)
+        left_column.setContentsMargins(0, 0, 0, 0)
+
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setUniformRowHeights(True)
+        left_column.addWidget(self.tree, 1)
+
+        # Range, rate and size as one line. Prism gives this a panel of its
+        # own with an empty thumbnail slot in it; it is three numbers.
+        self.facts = QtWidgets.QLabel('')
+        self.facts.setStyleSheet('color:#8a8a8a')
+        left_column.addWidget(self.facts)
+        panes.addWidget(left)
+
+        # -- right: the versions, each with the picture it saved --------------
+        right = QtWidgets.QWidget()
+        right_column = QtWidgets.QVBoxLayout(right)
+        right_column.setContentsMargins(0, 0, 0, 0)
 
         self.versions = QtWidgets.QListWidget()
-        self.versions.setMinimumHeight(120)
-        layout.addWidget(self.versions)
+        self.versions.setIconSize(QtCore.QSize(VERSION_ICON_WIDTH,
+                                               VERSION_ICON_WIDTH * 9 // 16))
+        right_column.addWidget(self.versions, 1)
 
         buttons = QtWidgets.QHBoxLayout()
         self.open_button = QtWidgets.QPushButton('Open')
@@ -89,12 +105,18 @@ class Browser(object):
         self.new_from_button = QtWidgets.QPushButton('New from Current')
         for widget in (self.open_button, self.new_button, self.new_from_button):
             buttons.addWidget(widget)
-        layout.addLayout(buttons)
+        right_column.addLayout(buttons)
 
         # Import is its own row: the three above replace what is open, this
         # one adds to it, and a mis-click between those two is expensive.
         self.import_button = QtWidgets.QPushButton('Import into Current Script')
-        layout.addWidget(self.import_button)
+        right_column.addWidget(self.import_button)
+        panes.addWidget(right)
+
+        panes.setStretchFactor(0, 38)
+        panes.setStretchFactor(1, 62)
+        panes.setSizes([330, 550])
+        layout.addWidget(panes, 1)
 
         layout.addWidget(self.status)
 
@@ -107,9 +129,7 @@ class Browser(object):
         layout.addLayout(footer)
 
         self.project.currentIndexChanged.connect(self._on_project)
-        self.sequence.currentIndexChanged.connect(self._on_sequence)
-        self.shot.currentIndexChanged.connect(self._on_shot)
-        self.task.currentIndexChanged.connect(self._on_task)
+        self.tree.currentItemChanged.connect(self._on_tree)
 
         self.open_button.clicked.connect(self._open)
         self.new_button.clicked.connect(lambda: self._create(False))
@@ -119,11 +139,14 @@ class Browser(object):
         self.refresh_button.clicked.connect(self.reload)
 
         self._loading = False
+        self._sequence_id = ''
+        self._shot_id = ''
+        self._task_id = ''
 
     # -- filling in -----------------------------------------------------------
 
     def reload(self):
-        '''Reconnect if needed and refill everything from Kitsu.'''
+        """Reconnect if needed and refill everything from Kitsu."""
         if not state.connected:
             problem = fetch.connect()
             if problem:
@@ -133,7 +156,7 @@ class Browser(object):
         self._fill(self.project, state.projects, settings.get('last_project'))
 
     def _fill(self, combo, rows, remembered=None):
-        '''Refill a combo, keeping the id on each item and restoring a choice.'''
+        """Refill a combo, keeping the id on each item and restoring a choice."""
         self._loading = True
         try:
             combo.clear()
@@ -152,7 +175,7 @@ class Browser(object):
     def _id(self, combo):
         return combo.currentData()
 
-    # -- the cascade ----------------------------------------------------------
+    # -- the tree -------------------------------------------------------------
 
     def _on_project(self, _index=0):
         if self._loading:
@@ -163,70 +186,164 @@ class Browser(object):
         settings.set('last_project', project_id)
         fetch.project_selected(project_id)
         self._say(state.message, state.is_error)
-        self._fill(self.sequence, state.sequences, settings.get('last_sequence'))
+        self._build_tree()
 
-    def _on_sequence(self, _index=0):
-        if self._loading:
-            return
-        sequence_id = self._id(self.sequence)
-        if not sequence_id:
-            return
-        settings.set('last_sequence', sequence_id)
-        self._fill(self.shot, state.shots_in(sequence_id),
-                   settings.get('last_shot'))
+    def _build_tree(self):
+        """Sequences and their shots. Tasks arrive when a shot is chosen.
 
-    def _on_shot(self, _index=0):
-        if self._loading:
-            return
-        shot_id = self._id(self.shot)
-        if not shot_id:
-            return
-        settings.set('last_shot', shot_id)
-        fetch.shot_selected(shot_id)
-        self._say(state.message, state.is_error)
-        self._show_thumbnail(shot_id)
+        Shots are already in hand - the project fetch brings the whole list -
+        so they cost nothing here. Tasks are per-entity in Kitsu, so a tree
+        that showed them everywhere would be one request per shot.
+        """
+        QtCore, QtWidgets = _qt()
 
-        tasks = state.comp_tasks()
-        rows = [{'id': t['id'],
-                 'name': state.task_type_name(t.get('task_type_id', ''))}
-                for t in tasks]
-        self._fill(self.task, rows, settings.get('last_task'))
-        if not rows:
-            self.versions.clear()
+        self._loading = True
+        restore = None
+        try:
+            self.tree.clear()
+            wanted_shot = settings.get('last_shot')
 
-    def _on_task(self, _index=0):
-        if self._loading:
+            for sequence in state.sequences:
+                node = QtWidgets.QTreeWidgetItem(self.tree,
+                                                 [sequence.get('name') or '?'])
+                node.setData(0, QtCore.Qt.UserRole, ('group', sequence['id']))
+
+                for shot in state.shots_in(sequence['id']):
+                    leaf = QtWidgets.QTreeWidgetItem(node,
+                                                     [shot.get('name') or '?'])
+                    leaf.setData(0, QtCore.Qt.UserRole, ('entity', shot['id']))
+                    if shot['id'] == wanted_shot:
+                        restore = leaf
+        finally:
+            self._loading = False
+
+        if restore is not None:
+            restore.parent().setExpanded(True)
+            self.tree.setCurrentItem(restore)
+        elif self.tree.topLevelItemCount():
+            self.tree.topLevelItem(0).setExpanded(True)
+
+    def _on_tree(self, item, _previous=None):
+        if self._loading or item is None:
             return
-        task_id = self._id(self.task)
-        if not task_id:
+
+        QtCore, _QtWidgets = _qt()
+        payload = item.data(0, QtCore.Qt.UserRole)
+        if not payload:
             return
-        settings.set('last_task', task_id)
+        kind, identifier = payload
+
+        if kind == 'group':
+            self._sequence_id = identifier
+            settings.set('last_sequence', identifier)
+            item.setExpanded(not item.isExpanded())
+            return
+
+        if kind == 'entity':
+            parent = item.parent()
+            if parent is not None:
+                self._sequence_id = parent.data(0, QtCore.Qt.UserRole)[1]
+                settings.set('last_sequence', self._sequence_id)
+            self._shot_id = identifier
+            settings.set('last_shot', identifier)
+            self._load_tasks(item, identifier)
+            return
+
+        self._task_id = identifier
+        settings.set('last_task', identifier)
         self._refresh_versions()
 
-    def _show_thumbnail(self, shot_id):
-        '''Draw the shot's Kitsu thumbnail, or say why there is not one.'''
-        picture = None
-        if state.connected:
-            picture = thumbnails.pixmap(state.client, state.shot(shot_id))
+    def _load_tasks(self, node, shot_id):
+        """Hang this shot's compositing tasks under it and pick one."""
+        QtCore, QtWidgets = _qt()
 
-        if picture is None:
-            self.thumbnail.clear()
-            self.thumbnail.setText(
-                '<span style="color:#8a8a8a">no thumbnail in Kitsu for this '
-                'shot</span>')
+        fetch.shot_selected(shot_id)
+        self._say(state.message, state.is_error)
+        self._show_facts(shot_id)
+
+        self._loading = True
+        chosen = None
+        try:
+            node.takeChildren()
+            wanted = settings.get('last_task')
+            for task in state.comp_tasks():
+                label = state.task_type_name(task.get('task_type_id', '')) or '?'
+                leaf = QtWidgets.QTreeWidgetItem(node, [label])
+                leaf.setData(0, QtCore.Qt.UserRole, ('task', task['id']))
+                if chosen is None or task['id'] == wanted:
+                    chosen = leaf
+        finally:
+            self._loading = False
+
+        node.setExpanded(True)
+
+        if chosen is None:
+            self._task_id = ''
+            self.versions.clear()
+            self._enable_actions(False)
             return
 
-        self.thumbnail.setPixmap(picture)
+        # One compositing task is the normal case, so selecting it rather than
+        # making the artist click it again is the whole point of filtering by
+        # department in the first place.
+        self.tree.setCurrentItem(chosen)
+
+    def _show_facts(self, shot_id):
+        """Range, rate and size for the selected shot, as one line."""
+        from BB_core import frames
+
+        shot = state.shot(shot_id) or {}
+        project = state.project(self._id(self.project)) or {}
+
+        facts = []
+        first, last = frames.frame_range(shot)
+        if first is not None and last is not None:
+            facts.append('%d-%d' % (first, last))
+
+        rate = frames.fps(project, shot)
+        if rate:
+            facts.append('%s fps' % frames.describe(rate))
+
+        size = frames.resolution(project, shot)
+        if size:
+            facts.append('%dx%d' % size)
+
+        self.facts.setText('  ·  '.join(facts))
+
+    def _enable_actions(self, enabled):
+        self.open_button.setEnabled(enabled)
+        self.import_button.setEnabled(enabled)
 
     def _refresh_versions(self):
+        _QtCore, QtWidgets = _qt()
+
         self.versions.clear()
         entity_context = self.context()
         if entity_context is None:
+            self._enable_actions(False)
             return
 
         found = fetch.list_versions(entity_context)
+        config = session.config_for(entity_context)
+
         for version, path in reversed(found):
-            self.versions.addItem('v%03d    %s' % (version, os.path.basename(str(path))))
+            item = QtWidgets.QListWidgetItem(
+                'v%03d    %s' % (version, os.path.basename(str(path))))
+
+            picture = None
+            try:
+                picture = thumbnails.from_file(
+                    workfiles.thumb_file(entity_context, 'nuke', version,
+                                         config),
+                    width=VERSION_ICON_WIDTH)
+            except Exception:
+                picture = None
+            if picture is not None:
+                from PySide6 import QtGui
+                item.setIcon(QtGui.QIcon(picture))
+
+            self.versions.addItem(item)
+
         if found:
             self.versions.setCurrentRow(0)
             self.new_button.setText('New v%03d' % (found[-1][0] + 1))
@@ -234,8 +351,7 @@ class Browser(object):
             self.new_button.setText('Create v001')
             self._say('no script yet for this task')
 
-        self.open_button.setEnabled(bool(found))
-        self.import_button.setEnabled(bool(found))
+        self._enable_actions(bool(found))
 
     def context(self):
         return fetch.current_context(self._id(self.project), self._id(self.sequence),

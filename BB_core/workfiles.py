@@ -7,6 +7,7 @@ version than the scene: nothing here accepts a version argument that did not
 come off the context.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -98,6 +99,47 @@ def list_workfiles(context, dcc, config=None):
     return versioning.existing_versions(
         work_dir(context, config), context.as_fields(), ext, config
     )
+
+
+# The folder holding one small image per work version. A dot-folder beside
+# the scene files rather than a parallel tree: it moves with the work when a
+# shot is relocated, and sync tools already skip dot-folders by default.
+THUMB_DIR = ".thumbs"
+
+
+def thumb_file(context, dcc, version=None, config=None):
+    """The thumbnail for one version of a scene file.
+
+    Kitsu cannot supply this. Its preview files are numbered by their own
+    revision counter, which counts publishes and review comments rather than
+    work versions, so revision 3 is not version 3 and often belongs to no
+    version at all - measured against a real project, not assumed. A picture
+    of *this* version therefore has to be written when the version is saved.
+    """
+    config = (config or Config()).for_project(context.project)
+    version = context.version if version is None else version
+    name = "%s.png" % context.versioned(version, config)
+    return work_dir(context, config) / THUMB_DIR / name
+
+
+def save_thumb(context, dcc, source, version=None, config=None):
+    """Store *source* as the thumbnail for a version. Returns the path or None.
+
+    Never raises. A missing picture makes the browser show a blank slot,
+    which is a far smaller problem than a save that fails because the
+    thumbnail could not be written.
+    """
+    import shutil
+
+    if not source or not os.path.isfile(str(source)):
+        return None
+    try:
+        target = thumb_file(context, dcc, version, config)
+        os.makedirs(str(target.parent), exist_ok=True)
+        shutil.copyfile(str(source), str(target))
+        return target
+    except Exception:
+        return None
 
 
 def next_workfile(context, dcc, config=None):
