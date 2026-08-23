@@ -311,7 +311,7 @@ class Browser(object):
 
         rate = frames.fps(project, shot)
         if rate:
-            facts.append('%s fps' % frames.describe(rate))
+            facts.append(frames.describe(rate))
 
         size = frames.resolution(project, shot)
         if size:

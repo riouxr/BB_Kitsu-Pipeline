@@ -22,7 +22,7 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator
 
-from . import (capture, fetch, handlers, prefs, properties, publish,
+from . import (capture, core, fetch, handlers, prefs, properties, publish,
                render, review, scenesync, session, stamp, thumbnails,
                treeview)
 
@@ -366,7 +366,7 @@ class BB_OT_browser(Operator):
 
         rate = frames.fps(project, entity)
         if rate:
-            facts.append('%s fps' % frames.describe(rate))
+            facts.append(frames.describe(rate))
 
         size = frames.resolution(project, entity)
         if size:

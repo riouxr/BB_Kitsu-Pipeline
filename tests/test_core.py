@@ -7,6 +7,7 @@ add it without wheels.
     python -m unittest discover -s tests -v
 """
 
+import ast
 import re
 import sys
 import tempfile
@@ -879,6 +880,82 @@ class TestVersionsAgree(unittest.TestCase):
         self.assertEqual(core, manifest,
                          "BB_core and the Blender manifest disagree")
         self.assertEqual(core, nuke, "BB_core and the Nuke package disagree")
+
+
+class TestSiblingModuleNames(unittest.TestCase):
+    """Names that only blow up when a draw callback runs.
+
+    Blender swallows an exception in draw and simply stops drawing, so a
+    module referenced but never imported, or an attribute that lives on the
+    Nuke session rather than the Blender one, shows up as a browser that
+    renders half of itself. Both have happened. Neither is reachable by the
+    tests that matter, so they are caught statically instead.
+    """
+
+    PACKAGES = ("blender/BB_pipeline", "nuke/BB_pipeline_nuke")
+
+    def modules_in(self, package):
+        return {path.stem: path for path in (REPO / package).glob("*.py")
+                if path.stem != "__init__"}
+
+    def top_level_names(self, path):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        found = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                found.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        found.add(target.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    found.add(alias.asname or alias.name.split(".")[0])
+        return found
+
+    def imported_siblings(self, path, siblings):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level:
+                for alias in node.names:
+                    name = alias.asname or alias.name
+                    if name in siblings:
+                        found.add(name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    name = (alias.asname or alias.name).split(".")[-1]
+                    if name in siblings:
+                        found.add(name)
+        return found
+
+    # A scope-aware check for "module used but never imported" was tried and
+    # removed: several modules import their siblings inside the function that
+    # needs them, and telling that apart from a genuine miss needs a real
+    # scope walker. pyflakes does this properly if it is ever worth wiring in.
+    # What stays is the half that is exact - an attribute that the sibling
+    # does not define, which is how session.config_for reached Blender.
+
+    def test_sibling_attributes_exist(self):
+        problems = []
+        for package in self.PACKAGES:
+            modules = self.modules_in(package)
+            defined = {n: self.top_level_names(p) for n, p in modules.items()}
+            for name, path in sorted(modules.items()):
+                imported = self.imported_siblings(path, set(modules))
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if (isinstance(node, ast.Attribute)
+                            and isinstance(node.value, ast.Name)
+                            and node.value.id in imported
+                            and not node.attr.startswith("__")
+                            and node.attr not in defined[node.value.id]):
+                        problems.append(
+                            "%s/%s.py calls %s.%s which %s does not define"
+                            % (package, name, node.value.id, node.attr,
+                               node.value.id))
+        self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
 
 if __name__ == "__main__":
