@@ -24,6 +24,11 @@ VERSION_ICON_WIDTH = 96
 TITLE = 'Kitsu Browser'
 
 
+def _version():
+    from . import __version__
+    return __version__
+
+
 def _qt():
     from PySide6 import QtCore, QtWidgets
     return QtCore, QtWidgets
@@ -54,7 +59,9 @@ class Browser(object):
         QtCore, QtWidgets = _qt()
 
         self.dialog = QtWidgets.QDialog(_parent())
-        self.dialog.setWindowTitle(TITLE)
+        # Versioned, because Nuke caches imported modules and a session
+        # that was never restarted runs old code while looking identical.
+        self.dialog.setWindowTitle('%s  %s' % (TITLE, _version()))
         self.dialog.resize(880, 540)
 
         layout = QtWidgets.QVBoxLayout(self.dialog)

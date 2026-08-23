@@ -82,16 +82,37 @@ def rows(props):
     return built
 
 
+def _parent_of(props, entity_id):
+    '''The group an entity hangs under, whichever tab is showing.'''
+    if props.is_asset:
+        asset = state.asset(entity_id) or {}
+        return asset.get('entity_type_id') or ''
+    shot = state.shot(entity_id) or {}
+    return shot.get('parent_id') or ''
+
+
 def _pick(props, kind, identifier):
-    '''Point the existing properties at what was clicked.'''
+    '''Point the existing properties at what was clicked.
+
+    Expanding a group deliberately changes nothing but the tree. A dropdown
+    could only ever be *changed*, so selecting and browsing were the same
+    act; a tree lets you open a branch to look inside it, and making that
+    select the branch too rewrote the bookmark to a sequence the remembered
+    shot does not belong to - an impossible pair that then failed to restore.
+    '''
     if kind == 'group':
         toggle(identifier)
-        if identifier != props.group_id:
+        return
+
+    if kind == 'entity':
+        # The group has to lead, because the entity list is filtered by it -
+        # assigning a shot from another sequence to the enum would not take.
+        parent = _parent_of(props, identifier)
+        if parent and parent != props.group_id:
             if props.is_asset:
-                props.asset_type = identifier
+                props.asset_type = parent
             else:
-                props.sequence = identifier
-    elif kind == 'entity':
+                props.sequence = parent
         if props.is_asset:
             props.asset = identifier
         else:

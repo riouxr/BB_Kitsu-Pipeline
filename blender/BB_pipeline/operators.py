@@ -303,6 +303,12 @@ class BB_OT_browser(Operator):
         header.prop(props, 'project', text='')
         tabs = header.row(align=True)
         tabs.prop(props, 'entity_type', expand=True)
+        # Shown because there is otherwise no way to tell which build Blender
+        # actually loaded - a junctioned add-on and a stale copy look
+        # identical from the menu.
+        stamp_row = header.row()
+        stamp_row.enabled = False
+        stamp_row.label(text=core.version())
 
         split = layout.split(factor=0.38)
 

@@ -827,6 +827,30 @@ def main():
         check(all(row[0] == "group" for row in treeview.rows(props)),
               "collapsing puts the shots away again")
 
+        # Expanding a branch must not change the selection. A dropdown could
+        # only be changed, so browsing and choosing were one act; a tree lets
+        # you open a branch to look inside, and making that select the branch
+        # rewrote the bookmark to a sequence the remembered shot does not
+        # belong to - a pair that then failed to restore.
+        treeview._pick(props, "entity", "k2")
+        booked = bb_prefs.recall(bpy.context)
+        treeview._pick(props, "group", "q2")
+        after = bb_prefs.recall(bpy.context)
+        check(after["sequence"] == booked["sequence"]
+              and after["shot"] == booked["shot"],
+              "expanding a branch leaves the bookmark alone (%s/%s)"
+              % (after["sequence"], after["shot"]))
+
+        # Choosing a shot in another sequence has to move both, or the pair
+        # is impossible and the restore drops it.
+        treeview._pick(props, "entity", "k3")
+        moved = bb_prefs.recall(bpy.context)
+        check(moved["sequence"] == "q2" and moved["shot"] == "k3",
+              "picking across sequences moves both (%s/%s)"
+              % (moved["sequence"], moved["shot"]))
+        check(props.sequence == "q2" and props.shot == "k3",
+              "and the selectors agree")
+
         # A version row reuses the same operator, so it has to reach the
         # property the Open button reads.
         session.state.workfiles = [(1, work_root / "v001.blend"),

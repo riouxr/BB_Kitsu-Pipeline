@@ -7,12 +7,14 @@ add it without wheels.
     python -m unittest discover -s tests -v
 """
 
+import re
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
 
 from BB_core import (brief, filetree, frames, naming,  # noqa: E402
                        versioning, workfiles)
@@ -850,6 +852,33 @@ class TestVersionThumbnails(unittest.TestCase):
         stored = workfiles.save_thumb(self.context, "blender", newer, 8,
                                       self.config)
         self.assertTrue(stored.read_bytes().endswith(b"NEWER"))
+
+
+class TestVersionsAgree(unittest.TestCase):
+    """One version, declared in three files that cannot import each other.
+
+    The Blender manifest is TOML read by Blender itself, the Nuke package is
+    plain Python, and BB_core is shared by both - so nothing enforces that
+    they match except this. They sat at 0.1.0 through every change until
+    somebody asked which build was actually loaded.
+    """
+
+    def declared(self, path, pattern):
+        text = (REPO / path).read_text(encoding="utf-8")
+        found = re.search(pattern, text, re.M)
+        self.assertIsNotNone(found, "no version found in %s" % path)
+        return found.group(1)
+
+    def test_all_three_agree(self):
+        core = self.declared("BB_core/__init__.py",
+                             r'^__version__ = "([^"]+)"')
+        manifest = self.declared("blender/BB_pipeline/blender_manifest.toml",
+                                 r'^version = "([^"]+)"')
+        nuke = self.declared("nuke/BB_pipeline_nuke/__init__.py",
+                             r"^__version__ = '([^']+)'")
+        self.assertEqual(core, manifest,
+                         "BB_core and the Blender manifest disagree")
+        self.assertEqual(core, nuke, "BB_core and the Nuke package disagree")
 
 
 if __name__ == "__main__":

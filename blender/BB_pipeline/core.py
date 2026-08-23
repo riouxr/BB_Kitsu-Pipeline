@@ -65,3 +65,23 @@ def bootstrap():
     error = ''
     available = True
     return True
+
+
+def version():
+    """The add-on's version, as the browser shows it.
+
+    Read from the manifest rather than hard-coded, because the manifest is
+    what Blender installs and reports - so what the browser prints and what
+    the Extensions list says can never disagree. A junctioned add-on and a
+    stale copy look identical from the menu otherwise.
+    """
+    import os
+    import re
+
+    manifest = os.path.join(os.path.dirname(__file__), 'blender_manifest.toml')
+    try:
+        with open(manifest, encoding='utf-8') as handle:
+            found = re.search(r'^version\s*=\s*"([^"]+)"', handle.read(), re.M)
+    except OSError:
+        return '?'
+    return found.group(1) if found else '?'
