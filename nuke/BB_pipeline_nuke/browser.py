@@ -149,7 +149,6 @@ class Browser(object):
         self._sequence_id = ''
         self._shot_id = ''
         self._task_id = ''
-        self._kitsu_icon = None
 
     # -- filling in -----------------------------------------------------------
 
@@ -257,6 +256,11 @@ class Browser(object):
             self._load_tasks(item, identifier)
             return
 
+        parent = item.parent()
+        if parent is not None:
+            above = parent.data(0, QtCore.Qt.UserRole)
+            if above and above[0] == 'entity':
+                self._shot_id = above[1]
         self._task_id = identifier
         settings.set('last_task', identifier)
         self._refresh_versions()
@@ -268,7 +272,6 @@ class Browser(object):
         fetch.shot_selected(shot_id)
         self._say(state.message, state.is_error)
         self._show_facts(shot_id)
-        self._kitsu_icon = self._entity_pixmap(shot_id)
 
         self._loading = True
         chosen = None
@@ -350,6 +353,7 @@ class Browser(object):
 
         found = fetch.list_versions(entity_context)
         config = session.config_for(entity_context)
+        fallback = self._entity_pixmap(self._shot_id)
 
         for version, path in reversed(found):
             item = QtWidgets.QListWidgetItem(
@@ -364,7 +368,7 @@ class Browser(object):
             except Exception:
                 picture = None
             if picture is None:
-                picture = self._kitsu_icon
+                picture = fallback
             if picture is not None:
                 from PySide6 import QtGui
                 item.setIcon(QtGui.QIcon(picture))
@@ -381,8 +385,12 @@ class Browser(object):
         self._enable_actions(bool(found))
 
     def context(self):
-        return fetch.current_context(self._id(self.project), self._id(self.sequence),
-                                     self._id(self.shot), self._id(self.task))
+        # From the tree's own ids. The sequence, shot and task combo boxes
+        # these used to read were removed with the middle column, and reading
+        # a widget that no longer exists raised before a single version row
+        # could be built - an empty list rather than a visible error.
+        return fetch.current_context(self._id(self.project), self._sequence_id,
+                                     self._shot_id, self._task_id)
 
     # -- actions --------------------------------------------------------------
 

@@ -958,5 +958,94 @@ class TestSiblingModuleNames(unittest.TestCase):
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
 
+class TestSelfAttributesAreAssigned(unittest.TestCase):
+    """Attributes read off self that nothing in the class ever sets.
+
+    Removing the middle column deleted the sequence, shot and task combo
+    boxes but left context() reading them. Python only complains when the
+    line runs, and it ran inside the version refresh - so the browser showed
+    an empty list instead of an error, and looked like a thumbnail problem.
+    """
+
+    FILES = ("nuke/BB_pipeline_nuke/browser.py",
+             "blender/BB_pipeline/operators.py",
+             "blender/BB_pipeline/treeview.py")
+
+    def assigned_in(self, node):
+        """Every ``self.x`` the class body ever writes to."""
+        found = set()
+        for sub in ast.walk(node):
+            targets = []
+            if isinstance(sub, ast.Assign):
+                targets = sub.targets
+            elif isinstance(sub, (ast.AugAssign, ast.AnnAssign)):
+                targets = [sub.target]
+            elif isinstance(sub, (ast.For, ast.AsyncFor)):
+                targets = [sub.target]
+            for target in targets:
+                for part in ast.walk(target):
+                    if (isinstance(part, ast.Attribute)
+                            and isinstance(part.value, ast.Name)
+                            and part.value.id == "self"):
+                        found.add(part.attr)
+            # setattr(self, 'name', ...) counts as an assignment.
+            if (isinstance(sub, ast.Call)
+                    and isinstance(sub.func, ast.Name)
+                    and sub.func.id == "setattr"
+                    and sub.args
+                    and isinstance(sub.args[0], ast.Name)
+                    and sub.args[0].id == "self"):
+                if len(sub.args) > 1 and isinstance(sub.args[1], ast.Constant):
+                    found.add(sub.args[1].value)
+        return found
+
+    def defined_on(self, node):
+        """Methods, class attributes and anything inherited by name."""
+        found = set()
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found.add(item.name)
+            elif isinstance(item, ast.Assign):
+                for target in item.targets:
+                    if isinstance(target, ast.Name):
+                        found.add(target.id)
+            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                found.add(item.target.id)
+        return found
+
+    def test_no_attribute_is_read_without_being_set(self):
+        problems = []
+        for relative in self.FILES:
+            path = REPO / relative
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            # A mixin is completed by whatever it is combined with, so the
+            # names it reads are not its own to declare.
+            mixins = {b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "")
+                      for node in ast.walk(tree)
+                      if isinstance(node, ast.ClassDef) for b in node.bases}
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef) or node.name in mixins:
+                    continue
+                # Only classes that own their state. A Blender Operator gets
+                # its properties from annotations and the RNA system, and a
+                # Panel gets layout and friends from Blender itself.
+                bases = {b.attr if isinstance(b, ast.Attribute)
+                         else getattr(b, "id", "") for b in node.bases}
+                if bases - {"object"}:
+                    continue
+                known = self.assigned_in(node) | self.defined_on(node)
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Attribute)
+                            and isinstance(sub.value, ast.Name)
+                            and sub.value.id == "self"
+                            and isinstance(sub.ctx, ast.Load)
+                            and not sub.attr.startswith("__")
+                            and sub.attr not in known):
+                        problems.append(
+                            "%s:%d reads self.%s in %s, which nothing assigns"
+                            % (relative, sub.lineno, sub.attr, node.name))
+        self.assertEqual(problems, [], "\n" + "\n".join(sorted(set(problems))))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
