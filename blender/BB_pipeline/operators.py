@@ -382,10 +382,14 @@ class BB_OT_browser(Operator):
             empty.label(text='no versions yet', icon='FILE_BLANK')
         else:
             config = prefs.config(context)
+            # What Kitsu knows about this shot or asset, used for any version
+            # that has no picture of its own.
+            fallback = thumbnails.icon_id(
+                state.entity(props.entity_id, props.is_asset))
             column = listing.column(align=True)
             for version, path in reversed(state.workfiles):
                 self._draw_version_row(column, props, entity_context, version,
-                                       path, config, workfiles)
+                                       path, config, workfiles, fallback)
 
         next_version = (state.workfiles[-1][0] + 1) if has_files else 1
         made = ('Create v%03d' % next_version if not has_files
@@ -411,7 +415,7 @@ class BB_OT_browser(Operator):
         linking.operator('bb.link_workfile', text='Link', icon='LINK_BLEND')
 
     def _draw_version_row(self, column, props, entity_context, version, path,
-                          config, workfiles):
+                          config, workfiles, fallback=0):
         chosen = props.version == str(version)
 
         row = column.row(align=True)
@@ -423,7 +427,12 @@ class BB_OT_browser(Operator):
         except Exception:
             thumb = None
 
-        icon_id = thumbnails.version_icon(thumb) if thumb else 0
+        # The version's own picture when it has one, otherwise the entity
+        # thumbnail from Kitsu. Kitsu cannot say what a particular version
+        # looked like - its preview files are numbered by a revision counter
+        # that counts publishes and review comments - but it can say what the
+        # shot is, which is what makes a row recognisable at a glance.
+        icon_id = (thumbnails.version_icon(thumb) if thumb else 0) or fallback
         if icon_id:
             row.template_icon(icon_value=icon_id, scale=VERSION_ICON_SCALE)
         else:

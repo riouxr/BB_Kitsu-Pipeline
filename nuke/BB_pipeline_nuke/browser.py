@@ -142,6 +142,7 @@ class Browser(object):
         self._sequence_id = ''
         self._shot_id = ''
         self._task_id = ''
+        self._kitsu_icon = None
 
     # -- filling in -----------------------------------------------------------
 
@@ -260,6 +261,7 @@ class Browser(object):
         fetch.shot_selected(shot_id)
         self._say(state.message, state.is_error)
         self._show_facts(shot_id)
+        self._kitsu_icon = self._entity_pixmap(shot_id)
 
         self._loading = True
         chosen = None
@@ -310,6 +312,22 @@ class Browser(object):
 
         self.facts.setText('  ·  '.join(facts))
 
+    def _entity_pixmap(self, shot_id):
+        """The shot's own thumbnail from Kitsu, or None.
+
+        Kitsu cannot say what a particular work version looked like - its
+        preview files are numbered by a revision counter that counts
+        publishes and review comments, so none of them maps to v007 - but it
+        can say what the shot is, which is what makes a row recognisable.
+        """
+        if not state.connected:
+            return None
+        try:
+            return thumbnails.pixmap(state.client, state.shot(shot_id),
+                                     width=VERSION_ICON_WIDTH)
+        except Exception:
+            return None
+
     def _enable_actions(self, enabled):
         self.open_button.setEnabled(enabled)
         self.import_button.setEnabled(enabled)
@@ -338,6 +356,8 @@ class Browser(object):
                     width=VERSION_ICON_WIDTH)
             except Exception:
                 picture = None
+            if picture is None:
+                picture = self._kitsu_icon
             if picture is not None:
                 from PySide6 import QtGui
                 item.setIcon(QtGui.QIcon(picture))
