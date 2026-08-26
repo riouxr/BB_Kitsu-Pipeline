@@ -142,6 +142,32 @@ def _store_thumb(entity_context, version, config=None):
         capture.discard(picture)
 
 
+def read_sequence(pattern, first, last):
+    """Create a Read node for a rendered sequence. Returns the node.
+
+    The path arrives with a printf placeholder already in it, which is what
+    Nuke's Read wants - handing it a single frame would give a one-frame
+    Read that silently ignores the rest of the sequence.
+    """
+    nuke = _nuke()
+
+    if not pattern:
+        raise ScriptError('That render has no path')
+
+    path = str(pattern).replace(chr(92), '/')
+    try:
+        read = nuke.nodes.Read(file=path, first=int(first), last=int(last),
+                               origfirst=int(first), origlast=int(last))
+    except Exception as error:
+        raise ScriptError('Could not read %s: %s' % (path, error))
+
+    try:
+        read.setName('KitsuRead1', uncollide=True)
+    except Exception:
+        pass
+    return read
+
+
 def save_next_version():
     '''Save the open script as the next version of itself. Returns its path.'''
     nuke = _nuke()

@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.2.1.zip`.
+`dist/BB_pipeline-0.3.0.zip`.
 
 ### Develop
 
@@ -409,6 +409,26 @@ there is nothing to type.
 **Import into Current Script** is on its own row under the other three: those
 replace what is open, this one adds to it, and a mis-click between the two is
 expensive. It uses `nodePaste`, so the nodes arrive selected and ready to move.
+
+### Reading somebody else's renders
+
+The tree lists **every** task on the shot, not only the compositing ones. A
+task Nuke does not author is marked `(renders)` and behaves differently: there
+is no script to open, so **Open**, **New Version** and **New from Current**
+disappear, and the right pane lists the **rendered sequences on disk** for that
+task instead of `.nk` versions. **Import into Current Script** brings the
+selected one in as a Read node, over the range that was actually rendered.
+
+Which departments Nuke *authors* is still `[dcc.nuke] departments`. That list
+now means "tasks a comper works in", not "tasks a comper may look at" —
+filtering the tree by it hid the renders a comp is assembled from behind a
+department the comper does not own.
+
+The sequence comes off the **render root**, never out of Kitsu. What Kitsu
+holds is the review movie: re-encoded to H.264, and often at review
+resolution. Comping against that would throw away the float data and the
+resolution the render was made at. Kitsu is where a render is *reviewed*; the
+render root is where it *is*.
 
 The browser has the same two panes as Blender's — a `QTreeWidget` of sequences,
 shots and compositing tasks on the left, a version list with icons on the

@@ -149,6 +149,8 @@ class Browser(object):
         self._sequence_id = ''
         self._shot_id = ''
         self._task_id = ''
+        self._authoring = True
+        self._renders = []
 
     # -- filling in -----------------------------------------------------------
 
@@ -263,6 +265,8 @@ class Browser(object):
                 self._shot_id = above[1]
         self._task_id = identifier
         settings.set('last_task', identifier)
+        task = next((t for t in state.tasks if t['id'] == identifier), None)
+        self._authoring = state.authors(task) if task else True
         self._refresh_versions()
 
     def _load_tasks(self, node, shot_id):
@@ -278,8 +282,11 @@ class Browser(object):
         try:
             node.takeChildren()
             wanted = settings.get('last_task')
-            for task in state.comp_tasks():
+            for task in state.browsable_tasks():
                 label = state.task_type_name(task.get('task_type_id', '')) or '?'
+                if not state.authors(task):
+                    # Said plainly, because the buttons change underneath it.
+                    label = '%s  (renders)' % label
                 leaf = QtWidgets.QTreeWidgetItem(node, [label])
                 leaf.setData(0, QtCore.Qt.UserRole, ('task', task['id']))
                 if chosen is None or task['id'] == wanted:
@@ -343,13 +350,34 @@ class Browser(object):
         self.import_button.setEnabled(enabled)
 
     def _refresh_versions(self):
-        _QtCore, QtWidgets = _qt()
-
         self.versions.clear()
+        self._renders = []
+
         entity_context = self.context()
         if entity_context is None:
             self._enable_actions(False)
             return
+
+        if self._authoring:
+            self._list_scripts(entity_context)
+        else:
+            self._list_renders(entity_context)
+
+        self._show_buttons()
+
+    def _show_buttons(self):
+        """Only offer what the selected task can actually do.
+
+        A lighting task has no script to open and none to create - Nuke is
+        not the application that makes it. Leaving those three buttons
+        sitting there enabled would be offering to write a Nuke script into
+        somebody else's task folder.
+        """
+        for button in (self.open_button, self.new_button, self.new_from_button):
+            button.setVisible(self._authoring)
+
+    def _list_scripts(self, entity_context):
+        _QtCore, QtWidgets = _qt()
 
         found = fetch.list_versions(entity_context)
         config = session.config_for(entity_context)
@@ -358,21 +386,7 @@ class Browser(object):
         for version, path in reversed(found):
             item = QtWidgets.QListWidgetItem(
                 'v%03d    %s' % (version, os.path.basename(str(path))))
-
-            picture = None
-            try:
-                picture = thumbnails.from_file(
-                    workfiles.thumb_file(entity_context, 'nuke', version,
-                                         config),
-                    width=VERSION_ICON_WIDTH)
-            except Exception:
-                picture = None
-            if picture is None:
-                picture = fallback
-            if picture is not None:
-                from PySide6 import QtGui
-                item.setIcon(QtGui.QIcon(picture))
-
+            self._decorate(item, entity_context, version, config, fallback)
             self.versions.addItem(item)
 
         if found:
@@ -383,6 +397,58 @@ class Browser(object):
             self._say('no script yet for this task')
 
         self._enable_actions(bool(found))
+
+    def _list_renders(self, entity_context):
+        """Rendered sequences on disk for a task Nuke does not author.
+
+        Read off the disk rather than out of Kitsu on purpose. Kitsu holds
+        the review movie, re-encoded to H.264 and often at review
+        resolution; what a comp needs is the EXR sequence that movie was
+        made from, which only the render root has.
+        """
+        _QtCore, QtWidgets = _qt()
+
+        config = session.config_for(entity_context)
+        fallback = self._entity_pixmap(self._shot_id)
+
+        rows = []
+        for stream in sorted(getattr(config, 'streams', {}) or {'main': {}}):
+            try:
+                for version, pattern, first, last in workfiles.render_versions(
+                        entity_context, stream, config):
+                    rows.append((version, stream, pattern, first, last))
+            except Exception:
+                continue
+
+        for version, stream, pattern, first, last in sorted(rows, reverse=True):
+            label = 'v%03d    %s    %d-%d' % (version, stream, first, last)
+            if len(rows) and stream == 'main':
+                label = 'v%03d    %d-%d' % (version, first, last)
+            item = QtWidgets.QListWidgetItem(label)
+            self._decorate(item, entity_context, version, config, fallback)
+            self.versions.addItem(item)
+            self._renders.append((pattern, first, last))
+
+        if self._renders:
+            self.versions.setCurrentRow(0)
+        else:
+            self._say('nothing rendered yet for this task')
+
+        self._enable_actions(bool(self._renders))
+
+    def _decorate(self, item, entity_context, version, config, fallback):
+        picture = None
+        try:
+            picture = thumbnails.from_file(
+                workfiles.thumb_file(entity_context, 'nuke', version, config),
+                width=VERSION_ICON_WIDTH)
+        except Exception:
+            picture = None
+        if picture is None:
+            picture = fallback
+        if picture is not None:
+            from PySide6 import QtGui
+            item.setIcon(QtGui.QIcon(picture))
 
     def context(self):
         # From the tree's own ids. The sequence, shot and task combo boxes
@@ -417,6 +483,10 @@ class Browser(object):
             self.dialog.accept()
 
     def _import(self):
+        if not self._authoring:
+            self._read_selected_render()
+            return
+
         path = self._selected_path()
         if not path:
             self._say('No version selected', error=True)
@@ -429,6 +499,29 @@ class Browser(object):
 
         self._say('imported %s' % os.path.basename(path))
         self.dialog.accept()
+
+    def _read_selected_render(self):
+        """Bring a rendered sequence in as a Read node.
+
+        The sequence off the render root, not the movie off Kitsu. Kitsu's
+        copy is re-encoded H.264 for review; comping against it would throw
+        away the float data and the resolution the render was made at.
+        """
+        row = self.versions.currentRow()
+        if row < 0 or row >= len(self._renders):
+            self._say('No render selected', error=True)
+            return
+
+        pattern, first, last = self._renders[row]
+        try:
+            read = scripts.read_sequence(pattern, first, last)
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+
+        self._say('read %s' % os.path.basename(pattern))
+        if read is not None:
+            self.dialog.accept()
 
     def _create(self, from_current):
         entity_context = self.context()

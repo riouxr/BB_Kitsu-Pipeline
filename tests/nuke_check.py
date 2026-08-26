@@ -276,7 +276,23 @@ def main():
           % sorted(state.task_departments or []))
     offered = [state.task_type_name(t["task_type_id"]) for t in state.comp_tasks()]
     check(offered == ["Compositing"],
-          "only compositing tasks are offered (%s)" % offered)
+          "only compositing tasks are Nuke's to author (%s)" % offered)
+
+    # Browsing is not authoring. Filtering the tree down to compositing hid
+    # the renders a comp is assembled from behind a department the comper
+    # does not own - a lighting task has no script to open, but its EXRs are
+    # exactly what gets read in.
+    browsable = [state.task_type_name(t["task_type_id"])
+                 for t in state.browsable_tasks()]
+    check(sorted(browsable) == ["Compositing", "Lighting"],
+          "every task on the shot is browsable (%s)" % browsable)
+    check(browsable[0] == "Compositing",
+          "with the ones Nuke authors first (%s)" % browsable)
+
+    lighting = next(t for t in state.tasks if t["task_type_id"] == "tt1")
+    compositing = next(t for t in state.tasks if t["task_type_id"] == "tt2")
+    check(state.authors(compositing) and not state.authors(lighting),
+          "and only compositing counts as authored here")
 
     # -- context, naming and paths -------------------------------------------
     state.projects = [{"id": "p1", "name": "PizzaHunt", "code": None, "fps": "24"}]
@@ -581,6 +597,21 @@ def main():
     read = writenode.add_read(node)
     check(read is not None and read.knobs.get("file") == pattern,
           "Add Read Node reads exactly what was written")
+
+    # Importing a render from a task Nuke does not author goes through the
+    # same shape: a placeholder path and an explicit range, never one frame.
+    brought = scripts.read_sequence(pattern, 1001, 1003)
+    check(brought is not None and brought.knobs.get("file") == pattern,
+          "a render imports as a Read on the sequence pattern")
+    check(brought.knobs.get("first") == 1001 and brought.knobs.get("last") == 1003,
+          "over the range that was rendered (%s-%s)"
+          % (brought.knobs.get("first"), brought.knobs.get("last")))
+    try:
+        scripts.read_sequence("", 1, 2)
+        refused = False
+    except scripts.ScriptError:
+        refused = True
+    check(refused, "and an empty path is refused rather than read")
     check(read.knobs.get("first") == 1001 and read.knobs.get("last") == 1003,
           "over the rendered range")
 

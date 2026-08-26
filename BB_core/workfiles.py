@@ -14,6 +14,10 @@ from pathlib import Path
 from . import naming, versioning
 from .config import Config
 
+# The frame number in a rendered file name: the last run of digits before
+# the extension, which is where every render_file template puts it.
+_FRAME = re.compile(r"(\d+)(?=\.[^.]+$)")
+
 _TOKEN = re.compile(r"\{(\w+)\}")
 
 
@@ -176,6 +180,81 @@ def render_dir(context, stream="main", config=None):
         stream=folder,
         versioned=context.versioned(config=config),
     )
+
+
+def render_versions(context, stream="main", config=None):
+    """Every rendered version of one stream on disk, oldest first.
+
+    Returns ``[(version, pattern, first, last)]``, where *pattern* carries a
+    printf frame placeholder rather than a real frame - the form a Read node
+    or an ``ffmpeg -i`` wants, and the form that survives being handed to a
+    glob.
+
+    This exists because a render is not a work file. A comper opening a
+    lighting task has nothing to *open* - there is no scene file for them -
+    but there is a sequence on disk to read, and Kitsu cannot hand it over:
+    what Kitsu stores is the review movie, re-encoded to H.264, which is not
+    what anybody comps against.
+    """
+    config = (config or Config()).for_project(context.project)
+    if stream not in config.streams:
+        return []
+
+    # render_dir ends in the version folder, so its parent is the folder that
+    # holds every version of this stream.
+    try:
+        folder = render_dir(context.at_version(1), stream, config).parent
+    except (ValueError, KeyError):
+        return []
+    if not folder.is_dir():
+        return []
+
+    wanted = naming.format_base(context.as_fields(), config)
+    ext = config.streams[stream].get("ext", "exr")
+
+    found = []
+    for entry in sorted(folder.iterdir()):
+        if not entry.is_dir():
+            continue
+        # Same rule as existing_versions: the folder has to name this shot
+        # and this task, so a stray folder cannot invent a version.
+        parsed = naming.parse(entry.name, config)
+        if not parsed:
+            continue
+        if naming.format_base(parsed, config).lower() != wanted.lower():
+            continue
+        version = parsed["version"]
+        if version is None:
+            continue
+        frames = sorted(entry.glob("*.%s" % ext))
+        if not frames:
+            continue
+        pattern, first, last = _frame_pattern(frames)
+        if pattern:
+            found.append((version, pattern, first, last))
+
+    return sorted(found)
+
+
+def _frame_pattern(frames):
+    """``(pattern, first, last)`` for a run of numbered frames."""
+    numbers = []
+    pattern = ""
+    for path in frames:
+        match = _FRAME.search(path.name)
+        if not match:
+            continue
+        numbers.append(int(match.group(1)))
+        if not pattern:
+            digits = len(match.group(1))
+            pattern = str(path.parent / (
+                path.name[:match.start(1)]
+                + "%0{}d".format(digits)
+                + path.name[match.end(1):]))
+
+    if not numbers:
+        return "", 0, 0
+    return pattern, min(numbers), max(numbers)
 
 
 def render_file(context, stream="main", frame="####", config=None):

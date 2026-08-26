@@ -72,26 +72,35 @@ class Session:
         department = self.departments.get(task_type.get('department_id'))
         return department['name'] if department else ''
 
-    def comp_tasks(self):
-        '''The shot's tasks that belong to Nuke.
+    def authors(self, task):
+        '''True when Nuke is the application that *makes* this task.
 
-        The filter is the configured department list, the same mechanism
-        Blender uses for its 3D tasks - so moving Edit into compositing, or
-        splitting 2D out, is a config change and not a code change.
+        The configured departments say what a comper works in, not what a
+        comper may look at. Lighting is not Nuke's to author - there is no
+        script to open - but its renders are exactly what a comp reads, so
+        the task still belongs in the tree.
         '''
         allowed = self.task_departments
-        found = []
-        for task in self.tasks:
-            task_type_id = task.get('task_type_id', '')
-            name = self.task_type_name(task_type_id)
-            if not name:
-                continue
-            if allowed is not None:
-                if self.department_of(task_type_id).lower() not in allowed:
-                    continue
-            found.append(task)
-        return sorted(found, key=lambda t: self.task_type_name(
-            t.get('task_type_id', '')).lower())
+        if allowed is None:
+            return True
+        return self.department_of(task.get('task_type_id', '')).lower() in allowed
+
+    def browsable_tasks(self):
+        '''Every task on the shot, authored here or not.
+
+        Filtering these down to compositing was a mistake: it hid the
+        renders a comp is assembled from behind a department the comper does
+        not own.
+        '''
+        found = [task for task in self.tasks
+                 if self.task_type_name(task.get('task_type_id', ''))]
+        return sorted(found, key=lambda t: (
+            not self.authors(t),
+            self.task_type_name(t.get('task_type_id', '')).lower()))
+
+    def comp_tasks(self):
+        '''The shot's tasks Nuke authors, for anything that must write.'''
+        return [task for task in self.browsable_tasks() if self.authors(task)]
 
     def say(self, message, error=False):
         self.is_error = error

@@ -1047,5 +1047,84 @@ class TestSelfAttributesAreAssigned(unittest.TestCase):
         self.assertEqual(problems, [], "\n" + "\n".join(sorted(set(problems))))
 
 
+class TestRenderVersions(unittest.TestCase):
+    """Rendered sequences on disk, for a task this application cannot author.
+
+    A comper opening a lighting task has nothing to open - there is no Nuke
+    script for it - but there is a sequence to read. Kitsu cannot supply it:
+    what Kitsu holds is the review movie, re-encoded to H.264, which is not
+    what anybody comps against.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.config = Config()
+        self.config.paths["render_root"] = str(self.root)
+        self.config.paths["work_root"] = str(self.root)
+        self.context = EntityContext(
+            project="PizzaHunt", group="sc01", entity="sh01", task="Lighting",
+            entity_type="shot", version=1)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def render(self, version, frames, task=None, ext="exr"):
+        context = self.context if task is None else EntityContext(
+            project="PizzaHunt", group="sc01", entity="sh01", task=task,
+            entity_type="shot", version=version)
+        folder = workfiles.render_dir(context.at_version(version), "main",
+                                      self.config)
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = context.versioned(version, self.config)
+        for frame in frames:
+            (folder / ("%s.%04d.%s" % (stem, frame, ext))).write_text("")
+        return folder
+
+    def test_nothing_rendered_is_empty(self):
+        self.assertEqual(workfiles.render_versions(self.context, "main",
+                                                   self.config), [])
+
+    def test_a_rendered_version_is_found_with_its_range(self):
+        self.render(1, range(1001, 1005))
+        found = workfiles.render_versions(self.context, "main", self.config)
+        self.assertEqual(len(found), 1)
+        version, pattern, first, last = found[0]
+        self.assertEqual((version, first, last), (1, 1001, 1004))
+
+    def test_the_pattern_carries_a_placeholder_not_a_frame(self):
+        # A Read node handed one concrete frame is a one-frame Read that
+        # silently ignores the rest of the sequence.
+        self.render(2, range(1001, 1003))
+        _v, pattern, _f, _l = workfiles.render_versions(
+            self.context, "main", self.config)[0]
+        self.assertIn("%04d", pattern)
+        self.assertNotIn("1001", Path(pattern).name)
+
+    def test_versions_come_back_in_order_with_gaps_kept(self):
+        self.render(3, range(1001, 1003))
+        self.render(1, range(1001, 1003))
+        found = workfiles.render_versions(self.context, "main", self.config)
+        self.assertEqual([row[0] for row in found], [1, 3])
+
+    def test_another_task_is_not_listed(self):
+        # The render root holds every department's output side by side.
+        self.render(1, range(1001, 1003))
+        self.render(9, range(1001, 1003), task="Compositing")
+        found = workfiles.render_versions(self.context, "main", self.config)
+        self.assertEqual([row[0] for row in found], [1])
+
+    def test_an_empty_version_folder_is_skipped(self):
+        folder = workfiles.render_dir(self.context.at_version(4), "main",
+                                      self.config)
+        folder.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(workfiles.render_versions(self.context, "main",
+                                                   self.config), [])
+
+    def test_an_unknown_stream_is_not_an_error(self):
+        self.assertEqual(workfiles.render_versions(self.context, "nosuch",
+                                                   self.config), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

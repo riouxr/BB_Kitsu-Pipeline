@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "BB_pipeline"
-version = "0.2.1"
+version = "0.3.0"
 name = "BB Kitsu Pipeline"
 tagline = "Kitsu shot browser, work files and versioning"
 maintainer = "riouxr <riouxr@gmail.com>"
