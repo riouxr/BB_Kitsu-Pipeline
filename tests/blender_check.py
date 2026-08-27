@@ -170,6 +170,15 @@ def main():
         check(stamp.read_current()[0].version == 2, "the stamp followed the version")
         check(stamp.read_current()[0].task_id == "t1", "the ids survived the increment")
 
+        # Versioning up has to move the render output with it. Left behind,
+        # the frames land in the previous version's folder - plausible, and
+        # wrong, and nobody notices until a comp reads the older render.
+        output_now = bpy.context.scene.render.filepath
+        check("v002" in output_now,
+              "the output path followed the version (%s)" % output_now)
+        check("v001" not in output_now,
+              "and no longer points at the version before it")
+
         fetch.refresh_workfiles()
         props = properties.get()
         check([v for v, _ in reversed(session.state.workfiles)] == [2, 1],

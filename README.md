@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.6.0.zip`.
+`dist/BB_pipeline-0.6.1.zip`.
 
 ### Develop
 
@@ -305,6 +305,12 @@ asset carries no frame range, so the Kitsu check has nothing to say about a
 prop — but a prop still renders, and an output path left pointing at the last
 shot is not a disagreement to report, it is frames written into the wrong
 folder.
+
+**Save Next Version** moves it too, before the file is written, so the new
+version carries the new path. Left behind it would be worse than never set:
+the frames land in the previous version's folder, which is plausible and
+wrong, and the first anybody knows is a comp reading an older render. Nuke
+does the same to every Kitsu Write in the script.
 
 Turn it off with **Set Output Path** in the preferences.
 

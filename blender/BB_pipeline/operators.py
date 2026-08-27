@@ -693,6 +693,13 @@ class BB_OT_save_next_version(Operator):
 
         shot_context = shot_context.at_version(version)
         stamp.write(context.scene, shot_context)
+
+        # Before the save, so the new version's output path is what gets
+        # written into the file. Versioning up otherwise leaves the scene
+        # rendering into the previous version's folder, which is worse than
+        # never having set it: the frames land somewhere plausible and wrong.
+        moved = scenesync.set_output(context, shot_context)
+
         _save_with_previews(context, path, shot_context)
 
         session.state.context = shot_context
@@ -703,7 +710,8 @@ class BB_OT_save_next_version(Operator):
                         'Saved %s - context recovered from the filename, so it '
                         'carries no Kitsu ids yet' % path.name)
         else:
-            self.report({'INFO'}, 'Saved %s' % path.name)
+            self.report({'INFO'}, 'Saved %s%s'
+                        % (path.name, ' - %s' % moved if moved else ''))
         _ask_to_publish(context, path)
         return {'FINISHED'}
 

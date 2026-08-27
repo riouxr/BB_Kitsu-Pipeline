@@ -117,13 +117,18 @@ def make_stub():
     stub.frame = lambda: 1001
 
     class StubNode:
-        def __init__(self, name="Node1", **knobs):
+        def __init__(self, name="Node1", node_class=None, **knobs):
             self._name = name
+            self._class = node_class or "".join(
+                c for c in name if not c.isdigit()) or "Node"
             self.knobs = dict(knobs)
             self._objects = {}
 
         def name(self):
             return self._name
+
+        def Class(self):
+            return self._class
 
         def setName(self, name, uncollide=False):
             self._name = name
@@ -144,6 +149,10 @@ def make_stub():
         def addKnob(self, knob):
             self._objects[knob.name()] = knob
 
+        def value_of(self, name):
+            knob = self.knob(name)
+            return knob.value() if knob else None
+
         def xpos(self):
             return 0
 
@@ -156,13 +165,13 @@ def make_stub():
     class Nodes:
         @staticmethod
         def Write(**knobs):
-            node = StubNode("Write1", **knobs)
+            node = StubNode("Write1", node_class="Write", **knobs)
             stub.created.append(node)
             return node
 
         @staticmethod
         def Read(**knobs):
-            node = StubNode("Read1", **knobs)
+            node = StubNode("Read1", node_class="Read", **knobs)
             stub.created.append(node)
             return node
 
@@ -182,7 +191,16 @@ def make_stub():
         def activeInput():
             return 0
 
+    def all_nodes(kind=None):
+        # Deleted nodes are gone; the pipeline creates temporaries and
+        # removes them, and a repoint must not chase those.
+        alive = [node for node in stub.created if node not in stub.deleted]
+        if kind is None:
+            return alive
+        return [node for node in alive if node.Class() == kind]
+
     stub.nodes = Nodes()
+    stub.allNodes = all_nodes
     stub.selectedNodes = lambda: stub.selected
     stub.activeViewer = lambda: Viewer() if stub.viewer_input else None
     stub.execute = execute
@@ -379,6 +397,25 @@ def main():
         "", encoding="utf-8")
     check(len(fetch.list_versions(context)) == 2,
           "scripts from another task are ignored")
+
+    # A Kitsu Write left aimed at the previous version is worse than one
+    # never set: the frames land somewhere plausible and wrong, and the first
+    # anybody knows is a comp reading a render from an older script.
+    from BB_pipeline_nuke import writenode as _writenode
+
+    aimed = _writenode.create()
+    before = aimed.value_of("file")
+    check("v002" in before, "a fresh Write aims at the open version (%s)"
+          % os.path.basename(before or ""))
+
+    bumped_again = scripts.save_next_version()
+    after = aimed.value_of("file")
+    check("v003" in after,
+          "versioning up moves the Write with it (%s)" % os.path.basename(after or ""))
+    check("v002" not in after, "and off the version before it")
+    check(os.path.basename(bumped_again).endswith("v003.nk"),
+          "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
+
 
     # -- publishing is gated the same way as Blender's -----------------------
     state.client = None

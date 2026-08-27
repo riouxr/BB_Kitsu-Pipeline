@@ -209,8 +209,39 @@ def save_next_version():
     os.makedirs(str(path.parent), exist_ok=True)
     nuke.scriptSaveAs(str(path), overwrite=1)
     state.context = stamped
+    _repoint_writes()
     _store_thumb(stamped, version, config)
     return str(path)
+
+
+def _repoint_writes():
+    """Move every Kitsu Write onto the version that was just created.
+
+    Versioning up otherwise leaves the Writes aimed at the previous
+    version's folder, which is worse than never having set them: the frames
+    land somewhere plausible and wrong, and the first anybody knows is a
+    comp reading a render that belongs to an older script.
+    """
+    nuke = _nuke()
+
+    from . import writenode
+
+    moved = 0
+    try:
+        nodes = nuke.allNodes('Write')
+    except Exception:
+        return 0
+
+    for node in nodes:
+        if not writenode.is_ours(node):
+            continue
+        try:
+            if writenode.set_output_path(node):
+                moved += 1
+        except Exception as error:
+            nuke.tprint('BB Kitsu Pipeline: could not repoint %s (%s)'
+                        % (node.name(), error))
+    return moved
 
 
 def _apply_format(entity_context):
