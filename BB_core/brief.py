@@ -89,6 +89,62 @@ def extract(description):
     return "\n".join(collected).strip()
 
 
+# A ``key = "value"`` line, which is the only shape a root is ever written in.
+_ASSIGNMENT = re.compile(r'^(\s*[\w.\-]+\s*=\s*)"(.*)"(\s*(?:#.*)?)$')
+
+# The characters that make a backslash the start of a real TOML escape.
+_ESCAPES = 'btnfr"\\uU'
+
+
+def _escape_backslashes(value):
+    r"""Double every backslash that is not already starting an escape.
+
+    Scanned rather than substituted, because a pair has to be consumed
+    together: a regex that looks one character ahead turns the already-correct
+    ``E:\\Show`` into three backslashes, which is a different kind of broken.
+    """
+    out = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char != '\\':
+            out.append(char)
+            index += 1
+            continue
+
+        following = value[index + 1] if index + 1 < len(value) else ''
+        if following and following in _ESCAPES:
+            out.append(char)
+            out.append(following)
+            index += 2
+        else:
+            out.append('\\\\')
+            index += 1
+    return ''.join(out)
+
+
+def _windows_paths(block):
+    r"""Let a Windows path be pasted into a brief exactly as it is copied.
+
+    TOML reads a backslash in a double-quoted string as an escape, so
+    ``work_root = "E:\Misery Loves Company"`` is not a path with a typo in
+    it - it is a parse error at ``\M``, and the whole block is discarded.
+    Nobody setting a project root should have to know that.
+
+    Only ``key = "value"`` lines are touched, and only backslashes that do
+    not already begin a real escape, so a brief written correctly in the
+    first place parses to exactly the same thing.
+    """
+    fixed = []
+    for line in block.splitlines():
+        match = _ASSIGNMENT.match(line)
+        if match:
+            head, value, tail = match.group(1), match.group(2), match.group(3)
+            line = '%s"%s"%s' % (head, _escape_backslashes(value), tail)
+        fixed.append(line)
+    return "\n".join(fixed)
+
+
 def parse(description):
     """Config overrides from a brief, or None when it carries none.
 
@@ -101,7 +157,7 @@ def parse(description):
         return None
 
     try:
-        parsed = tomllib.loads(block)
+        parsed = tomllib.loads(_windows_paths(block))
     except Exception as error:
         raise BadBrief(str(error))
 
@@ -143,3 +199,21 @@ def describe(project):
     if roots:
         return "roots from the Kitsu brief: %s" % ", ".join(sorted(roots))
     return "settings from the Kitsu brief"
+
+
+def problem(project):
+    """The reason a project's [bb] block was ignored, or ''.
+
+    Config deliberately swallows a bad brief - a broken block must not stop
+    the tools loading - but swallowing it silently is how "Set a Work Root"
+    ends up on screen for a project that plainly has one. This is what the
+    message says instead.
+    """
+    description = (project or {}).get("description")
+    if not extract(description):
+        return ""
+    try:
+        parse(description)
+    except BadBrief as error:
+        return "the [bb] block in the Kitsu brief will not parse: %s" % error
+    return ""

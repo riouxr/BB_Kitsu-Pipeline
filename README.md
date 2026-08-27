@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.3.1.zip`.
+`dist/BB_pipeline-0.3.2.zip`.
 
 ### Develop
 
@@ -596,6 +596,26 @@ Resolution order, each winning over the last: built-in defaults, local
 because it is the most deliberate and the most easily corrected. A `[bb]`
 block that is not valid TOML is **reported, not ignored** — silently dropping
 a typo in a root would write files somewhere unexpected.
+
+Paths can be written the way Windows hands them to you:
+
+```toml
+[bb]
+work_root = "E:\Misery Loves Company"
+render_root = "E:\Misery Loves Company"
+```
+
+TOML would normally reject that. A backslash inside a double-quoted string
+starts an escape, so `"E:\Misery Loves Company"` is not a path with a typo in
+it — it is a parse error at `\M`, and the whole block is discarded, leaving
+"Set a Work Root" on screen for a project that plainly has one. A lone
+backslash in a `key = "value"` line is doubled before the parser sees it, so
+pasted paths, forward slashes and correctly-escaped TOML all mean the same
+thing.
+
+Leniency stops there. A block that will not parse for any other reason is
+still reported rather than ignored — in the add-on preferences, and in place
+of the "Set a Work Root" message that used to hide it.
 
 ### Roots
 

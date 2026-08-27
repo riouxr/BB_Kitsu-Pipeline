@@ -64,6 +64,17 @@ def import_into_current(path):
     return path
 
 
+def _root_problem(entity_context):
+    """Why a configured root did not arrive, or '' when nothing is wrong."""
+    from BB_core import brief
+
+    try:
+        project = state.project((entity_context or {}).project_id)
+    except Exception:
+        project = None
+    return brief.problem(project)
+
+
 def next_version(entity_context):
     '''``(path, version)`` for the next script this task should get.'''
     if entity_context is None:
@@ -71,7 +82,8 @@ def next_version(entity_context):
 
     config = session.config_for(entity_context)
     if not (config.paths.get('work_root') or '').strip():
-        raise ScriptError('Set a Work Root in Kitsu > Settings..., or a '
+        raise ScriptError(_root_problem(entity_context) or
+                          'Set a Work Root in Kitsu > Settings..., or a '
                           '[bb] block in the Kitsu project brief')
 
     return workfiles.next_workfile(entity_context, session.DCC, config)

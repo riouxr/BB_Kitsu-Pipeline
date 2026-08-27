@@ -1182,5 +1182,65 @@ class TestBlenderExtensionPolicy(unittest.TestCase):
         self.assertEqual(offenders, [], "\n" + "\n".join(offenders))
 
 
+class TestWindowsPathsInABrief(unittest.TestCase):
+    r"""A root pasted into the Kitsu brief the way Windows writes it.
+
+    TOML reads a backslash in a double-quoted string as an escape, so
+    ``work_root = "E:\Misery Loves Company"`` is not a path with a typo - it
+    is a parse error at ``\M``, and the whole block is discarded. What the
+    artist then sees is "Set a Work Root" on a project that plainly has one.
+    """
+
+    REAL = ('Blender and Nuke tools read as settings.\n\n'
+            '[bb]\n'
+            'work_root = "E:\\Misery Loves Company"\n'
+            'render_root = "E:\\Misery Loves Company"\n')
+
+    def test_a_pasted_windows_path_parses(self):
+        parsed = brief.parse(self.REAL)
+        self.assertEqual(parsed["paths"]["work_root"],
+                         "E:\\Misery Loves Company")
+        self.assertEqual(parsed["paths"]["render_root"],
+                         "E:\\Misery Loves Company")
+
+    def test_a_trailing_backslash_survives(self):
+        parsed = brief.parse('[bb]\nwork_root = "E:\\Show\\"\n')
+        self.assertEqual(parsed["paths"]["work_root"], "E:\\Show\\")
+
+    def test_forward_slashes_still_work(self):
+        parsed = brief.parse('[bb]\nwork_root = "E:/Misery Loves Company"\n')
+        self.assertEqual(parsed["paths"]["work_root"],
+                         "E:/Misery Loves Company")
+
+    def test_a_correctly_escaped_brief_is_unchanged(self):
+        # Somebody who already knows TOML must not have their path doubled.
+        parsed = brief.parse('[bb]\nwork_root = "E:\\\\Show"\n')
+        self.assertEqual(parsed["paths"]["work_root"], "E:\\Show")
+
+    def test_a_real_escape_is_left_alone(self):
+        parsed = brief.parse('[bb]\nnote = "one\\ttwo"\n')
+        self.assertEqual(parsed["paths"]["note"], "one\ttwo")
+
+    def test_a_comment_after_the_value_survives(self):
+        parsed = brief.parse('[bb]\nwork_root = "E:\\Show"  # the drive\n')
+        self.assertEqual(parsed["paths"]["work_root"], "E:\\Show")
+
+    def test_a_genuinely_broken_block_still_raises(self):
+        # Leniency about backslashes must not turn into leniency about
+        # everything - a typo that changes where files land is worth a noise.
+        with self.assertRaises(brief.BadBrief):
+            brief.parse('[bb]\nwork_root = "unterminated\n')
+
+    def test_the_reason_is_reportable(self):
+        project = {"description": '[bb]\nwork_root = "unterminated\n'}
+        self.assertIn("will not parse", brief.problem(project))
+
+    def test_nothing_to_report_when_it_parses(self):
+        self.assertEqual(brief.problem({"description": self.REAL}), "")
+
+    def test_nothing_to_report_without_a_block(self):
+        self.assertEqual(brief.problem({"description": "just notes"}), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

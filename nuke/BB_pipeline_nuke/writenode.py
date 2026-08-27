@@ -65,7 +65,9 @@ def output_path(entity_context, stream='main'):
 
     config = session.config_for(entity_context)
     if not (config.paths.get('render_root') or '').strip():
-        raise WriteError('Set a Render Root in Kitsu > Settings..., or a '
+        from BB_core import brief
+        raise WriteError(brief.problem(state.project(entity_context.project_id)) or
+                         'Set a Render Root in Kitsu > Settings..., or a '
                          '[bb] block in the Kitsu project brief')
 
     # The core builds the same path Blender renders to; %04d is what Nuke

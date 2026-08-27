@@ -322,6 +322,12 @@ def roots_ready(context=None):
         pass
 
     if not preferences.work_root:
+        # A brief that will not parse is the likeliest reason a project with
+        # a root configured still reports one missing.
+        from .BB_core import brief
+        broken = brief.problem(_selected_project(context))
+        if broken:
+            return False, broken
         return False, ('Set a Work Root in the add-on preferences, or a '
                        '[bb] block in the Kitsu project brief')
     return True, ''
