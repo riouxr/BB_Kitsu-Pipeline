@@ -128,6 +128,110 @@ def build_movie(path, first=None, last=None):
     return output, ''
 
 
+def _belongs_elsewhere(entity_context, path):
+    """Why this Write's output is not this script's, or '' when it is.
+
+    A Write copied in from another shot's script keeps that shot's path, and
+    publishing it would post one shot's frames against another - the same
+    mistake the Blender side made by holding on to the last render across a
+    file load, and just as invisible until review.
+
+    Compared against the render folder for the open script rather than
+    against the name, so a Write pointed anywhere unexpected is caught, not
+    only one that happens to be named differently.
+    """
+    from BB_core import workfiles
+
+    try:
+        config = session.config_for(entity_context)
+        # The task's render folder, not the version's. Which shot and which
+        # task is the dangerous mismatch; the version is not checked here
+        # because versioning up repoints the Writes itself, and a Write
+        # still on the previous version is a repoint away rather than a
+        # publish against the wrong entity.
+        mine = str(workfiles.render_dir(entity_context, 'main', config).parent)
+    except Exception:
+        # No render root configured, or no context to build one from. The
+        # publish will report that in its own words.
+        return ''
+
+    here = os.path.normpath(str(path)).lower()
+    if here.startswith(os.path.normpath(mine).lower()):
+        return ''
+
+    return ('that Write renders to %s, which is not the render folder '
+            'for this task - point it at this one with Set Output Path'
+            % os.path.dirname(str(path)))
+
+
+def build_still(path, frame=None):
+    '''Convert one rendered frame to a PNG for Kitsu. Returns (path, problem).
+
+    A movie is for a sequence. Comp renders EXR, which Kitsu cannot show, so
+    a single frame still has to be converted - but into an image, not a
+    one-frame MP4 that Kitsu plays as a flicker and shows at video quality.
+    '''
+    nuke = _nuke()
+
+    found = rendered_frames(path)
+    if not found:
+        return None, 'nothing rendered at %s' % path
+
+    if frame is None:
+        frame, _last = frame_span(path, found)
+
+    handle, output = tempfile.mkstemp(prefix='bb_review_', suffix='.png')
+    os.close(handle)
+    os.remove(output)          # Nuke writes it; it must not exist first.
+    output = output.replace('\\', '/')
+
+    read = write = None
+    try:
+        read = nuke.nodes.Read(file=path, first=frame, last=frame,
+                               origfirst=frame, origlast=frame)
+        write = nuke.nodes.Write(inputs=[read], file=output, file_type='png',
+                                 colorspace=REVIEW_COLORSPACE,
+                                 create_directories=True)
+        nuke.execute(write, int(frame), int(frame))
+    except Exception as error:
+        _discard(output)
+        return None, 'could not build the review image: %s' % error
+    finally:
+        for node in (write, read):
+            if node is not None:
+                try:
+                    nuke.delete(node)
+                except Exception:
+                    pass
+
+    if not os.path.isfile(output) or not os.path.getsize(output):
+        _discard(output)
+        return None, 'the review image came out empty'
+
+    return output, ''
+
+
+def prepare(path):
+    '''The file to send to Kitsu, and whether it is a sequence.
+
+    Returns ``(path, is_sequence, problem)``. One frame goes as an image and
+    a run of them as a movie, the same rule the Blender side follows - the
+    difference being that Nuke has to convert either way, because comp
+    renders EXR and Kitsu shows neither.
+    '''
+    found = rendered_frames(path)
+    if not found:
+        return None, False, 'nothing rendered at %s' % path
+
+    if len(found) == 1:
+        first, _last = frame_span(path, found)
+        made, problem = build_still(path, first)
+        return made, False, problem
+
+    made, problem = build_movie(path)
+    return made, True, problem
+
+
 def submit(node, comment='', task_status_id=None):
     '''Publish what a Write rendered. Returns a note for the caller.'''
     entity_context, _source = stamp.read_current()
@@ -142,20 +246,24 @@ def submit(node, comment='', task_status_id=None):
     if not path:
         return 'this Write has no output path yet'
 
-    movie, problem = build_movie(path)
+    stale = _belongs_elsewhere(entity_context, path)
+    if stale:
+        return stale
+
+    preview, sequence, problem = prepare(path)
     if problem:
         return problem
 
     try:
         note = publish.send(entity_context, path, comment=comment,
-                            task_status_id=task_status_id, preview=movie)
+                            task_status_id=task_status_id, preview=preview)
     finally:
-        _discard(movie)
+        _discard(preview)
 
-    return note + _version_up_after_publish()
+    return note + _version_up_after_publish(sequence)
 
 
-def _version_up_after_publish():
+def _version_up_after_publish(sequence=True):
     '''Cut the next script version once a render has been published.
 
     So the script and the Kitsu revision stay in step: publishing three
@@ -165,7 +273,17 @@ def _version_up_after_publish():
     '''
     nuke = _nuke()
 
-    if not settings.get('version_up_on_publish', True):
+    when = settings.get('version_up_on_publish', 'SEQUENCE')
+    # Read leniently: this was a plain true/false before it was a choice.
+    if when is True:
+        when = 'ALWAYS'
+    elif when is False:
+        when = 'NEVER'
+
+    if when == 'NEVER':
+        return ''
+    if when == 'SEQUENCE' and not sequence:
+        # A single image is a look, not a delivery.
         return ''
 
     from . import scripts

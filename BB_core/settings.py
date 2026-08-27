@@ -26,10 +26,12 @@ DEFAULTS = {
     # Windows needs to be told that E: is /Volumes/Misery. Machine-local on
     # purpose - it describes this computer, not the show.
     "volumes": {},
-    # Publishing a render closes the version it came from, so the work file
-    # and the Kitsu revision stay in step rather than three renders piling
-    # up against one saved version.
-    "version_up_on_publish": True,
+    # When publishing should close the version it came from, so the work
+    # file and the Kitsu revision stay in step rather than three renders
+    # piling up against one saved version. SEQUENCE, ALWAYS or NEVER - the
+    # same three the Blender preference offers, because two applications
+    # disagreeing about what "on publish" means is worse than either answer.
+    "version_up_on_publish": "SEQUENCE",
 
     "server": "",
     "email": "",

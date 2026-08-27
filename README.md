@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.9.2.zip`.
+`dist/BB_pipeline-0.9.3.zip`.
 
 ### Develop
 
@@ -582,6 +582,18 @@ Which departments Nuke *authors* is still `[dcc.nuke] departments`. That list
 now means "tasks a comper works in", not "tasks a comper may look at" —
 filtering the tree by it hid the renders a comp is assembled from behind a
 department the comper does not own.
+
+Publishing a Write follows the same rule as Blender: **one frame goes as an
+image, a run of them as a movie**. Nuke has to convert either way, because
+comp renders EXR and Kitsu shows neither — but a one-frame MP4 is a flicker
+at video quality where a picture was wanted.
+
+A Write that renders somewhere outside this task's own folder is refused
+rather than published: a Write copied in from another shot keeps that shot's
+path, and posting one shot's frames against another is invisible until
+review. The version is deliberately not part of that check — versioning up
+repoints the Writes itself, so a Write on the previous version is a repoint
+away rather than a publish against the wrong entity.
 
 The sequence comes off the **render root**, never out of Kitsu. What Kitsu
 holds is the review movie: re-encoded to H.264, and often at review

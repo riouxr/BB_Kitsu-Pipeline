@@ -417,6 +417,63 @@ def main():
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
 
+    # -- a Write has to render into this script's own version folder ---------
+    # A Write copied in from another shot keeps that shot's path, and
+    # publishing it would post one shot's frames against another - the same
+    # mistake Blender made by holding a render across a file load.
+    mine = nuke_review._belongs_elsewhere(
+        context, str(Path(work_root) / "sc01" / "sh01" / "Compositing"
+                     / "Render" / "v004" / "sh01_v004.%04d.exr"))
+    check(not mine, "a Write in this version's folder is fine (%s)" % mine)
+
+    theirs = nuke_review._belongs_elsewhere(
+        context, str(Path(work_root) / "sc01" / "sh02" / "Compositing"
+                     / "Render" / "v001" / "sh02_v001.%04d.exr"))
+    check("not the render folder" in theirs,
+          "another shot's Write is refused (%s)" % theirs)
+    check("sh02" in theirs, "and the message names where it points")
+
+    # -- one frame is an image, a run of them is a movie ---------------------
+    # The Blender side learned this the hard way: an MP4 of one frame is a
+    # flicker at video quality where Kitsu would have shown a picture.
+    one_frame_dir = Path(work_root) / "onef"
+    one_frame_dir.mkdir(parents=True, exist_ok=True)
+    single = str(one_frame_dir / "sh01_v009.%04d.exr")
+    (one_frame_dir / "sh01_v009.1001.exr").write_bytes(b"exr")
+
+    made, sequence, problem = nuke_review.prepare(single)
+    check(not problem, "one frame prepares without complaint (%s)" % problem)
+    check(made is not None and str(made).lower().endswith(".png"),
+          "and goes as an image, not a movie (%s)" % made)
+    check(sequence is False, "and is not counted as a sequence")
+
+    (one_frame_dir / "sh01_v009.1002.exr").write_bytes(b"exr")
+    made, sequence, problem = nuke_review.prepare(single)
+    check(made is not None and str(made).lower().endswith(".mp4"),
+          "a second frame makes it a movie (%s)" % made)
+    check(sequence is True, "and that is a sequence")
+
+    # -- the setting means the same thing in both applications ----------------
+    settings.save({"version_up_on_publish": "NEVER"})
+    held = stamp.read().version
+    nuke_review._version_up_after_publish(True)
+    check(stamp.read().version == held, "NEVER leaves the version alone")
+
+    settings.save({"version_up_on_publish": "SEQUENCE"})
+    nuke_review._version_up_after_publish(False)
+    check(stamp.read().version == held,
+          "SEQUENCE leaves it alone for a single image")
+    nuke_review._version_up_after_publish(True)
+    check(stamp.read().version == held + 1,
+          "and cuts it for a sequence (%s)" % stamp.read().version)
+
+    # A true/false written by an older build still has to be understood.
+    settings.save({"version_up_on_publish": False})
+    held = stamp.read().version
+    nuke_review._version_up_after_publish(True)
+    check(stamp.read().version == held, "an old false still means never")
+    settings.save({"version_up_on_publish": "SEQUENCE"})
+
     # Publishing closes the version it came from, so three renders published
     # from one saved script cannot all land against the same version with
     # nothing on disk telling them apart.
