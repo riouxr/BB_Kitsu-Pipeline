@@ -1126,5 +1126,61 @@ class TestRenderVersions(unittest.TestCase):
                                                    self.config), [])
 
 
+class TestBlenderExtensionPolicy(unittest.TestCase):
+    """What Blender's extension validator objects to, checked here instead.
+
+    An add-on that writes to sys.path, or that imports a bundled package as a
+    top-level module, is listed in the preferences under Warning - one line
+    per module, which reads like something is broken. Both were true of the
+    old bootstrap; the core is bound as BB_pipeline.BB_core now.
+
+    Nuke has no such policy and keeps its plain `from BB_core import ...`,
+    so this applies to the Blender add-on alone.
+    """
+
+    ADDON = "blender/BB_pipeline"
+
+    def sources(self):
+        return sorted((REPO / self.ADDON).glob("*.py"))
+
+    def test_nothing_imports_bb_core_as_a_top_level_module(self):
+        offenders = []
+        for path in self.sources():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    # level 0 is an absolute import; anything higher is
+                    # relative and therefore fine.
+                    if not node.level and (node.module or "").split(".")[0] == "BB_core":
+                        offenders.append("%s:%d from %s import ..."
+                                         % (path.name, node.lineno, node.module))
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.split(".")[0] == "BB_core":
+                            offenders.append("%s:%d import %s"
+                                             % (path.name, node.lineno, alias.name))
+        self.assertEqual(offenders, [], "\n" + "\n".join(offenders))
+
+    def test_nothing_writes_to_sys_path(self):
+        offenders = []
+        for path in self.sources():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                target = node.func
+                if not isinstance(target, ast.Attribute):
+                    continue
+                if target.attr not in ("insert", "append", "extend"):
+                    continue
+                owner = target.value
+                if (isinstance(owner, ast.Attribute) and owner.attr == "path"
+                        and isinstance(owner.value, ast.Name)
+                        and owner.value.id == "sys"):
+                    offenders.append("%s:%d sys.path.%s(...)"
+                                     % (path.name, node.lineno, target.attr))
+        self.assertEqual(offenders, [], "\n" + "\n".join(offenders))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

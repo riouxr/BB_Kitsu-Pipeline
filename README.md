@@ -80,9 +80,26 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.3.0.zip`.
+`dist/BB_pipeline-0.3.1.zip`.
 
 ### Develop
+
+The add-on reaches the shared core through `from .BB_core import ...`, never
+`sys.path`. Blender's extension policy forbids both writing to `sys.path` and
+importing a bundled package as a top-level module, and lists each one under
+**Warning** in the preferences — which reads like something is broken.
+
+An installed extension has BB_core copied in beside the add-on, so the
+relative import just works. A development checkout has it one level up
+instead, and `core.bootstrap()` loads that directory *as* `BB_pipeline.BB_core`
+— the spec carries a `submodule_search_locations`, so the core you edit is the
+core that runs, with nothing added to `sys.path`.
+
+The checkout cannot simply hold a junction to it the way Blender's extensions
+folder does: this repository lives on an exFAT drive, which has no reparse
+points at all.
+
+Nuke has no such policy and keeps its plain `from BB_core import ...`.
 
 Link the checkout in instead, so edits are live and there is nothing to
 rebuild:

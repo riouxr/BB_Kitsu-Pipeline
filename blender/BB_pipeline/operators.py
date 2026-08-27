@@ -107,7 +107,7 @@ def _store_thumb(context, entity_context):
     if entity_context is None:
         return
 
-    from BB_core import workfiles
+    from .BB_core import workfiles
 
     picture = capture.viewport_png(context)
     if not picture:
@@ -349,7 +349,7 @@ class BB_OT_browser(Operator):
         Prism gives this a whole box with a thumbnail slot in it, which on a
         shot with no data is a large area of nothing. It is three numbers.
         '''
-        from BB_core import frames
+        from .BB_core import frames
 
         state = session.state
         entity = state.entity(props.entity_id, props.is_asset)
@@ -381,7 +381,7 @@ class BB_OT_browser(Operator):
 
     def _draw_versions(self, layout, context, props, entity_context):
         '''One row per version on disk, each with the picture it saved.'''
-        from BB_core import workfiles
+        from .BB_core import workfiles
 
         state = session.state
         has_files = bool(state.workfiles)

@@ -34,7 +34,7 @@ def kitsu_settings(entity_context, refresh=True):
     because the whole point is catching a range that changed since the file
     was saved; creating one uses the copy the browser already has.
     '''
-    from BB_core import frames
+    from .BB_core import frames
 
     state = session.state
     if entity_context is None:

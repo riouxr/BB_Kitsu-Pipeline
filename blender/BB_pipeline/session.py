@@ -230,12 +230,12 @@ def bind_core():
     global EntityContext, ShotContext, KitsuClient, AuthError, KitsuError, Config
     global workfiles_module, versioning_module, credentials_module
 
-    from BB_core import credentials, versioning, workfiles
-    from BB_core.config import Config as _Config
-    from BB_core.context import EntityContext as _EntityContext
-    from BB_core.kitsu import AuthError as _AuthError
-    from BB_core.kitsu import KitsuClient as _KitsuClient
-    from BB_core.kitsu import KitsuError as _KitsuError
+    from .BB_core import credentials, versioning, workfiles
+    from .BB_core.config import Config as _Config
+    from .BB_core.context import EntityContext as _EntityContext
+    from .BB_core.kitsu import AuthError as _AuthError
+    from .BB_core.kitsu import KitsuClient as _KitsuClient
+    from .BB_core.kitsu import KitsuError as _KitsuError
 
     EntityContext = _EntityContext
     ShotContext = _EntityContext

@@ -21,6 +21,10 @@ import bpy
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "blender"))
+# The add-on no longer puts BB_core on sys.path - Blender's extension
+# policy forbids it, and the core is bound as a submodule instead. The
+# test reaches for it directly, which is a harness's privilege.
+sys.path.insert(0, str(REPO))
 
 PACKAGE = "BB_pipeline"
 

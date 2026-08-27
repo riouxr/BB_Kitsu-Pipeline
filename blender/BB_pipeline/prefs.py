@@ -289,7 +289,7 @@ def kitsu_sources(context=None):
     if not project:
         return []
 
-    from BB_core import brief, filetree
+    from .BB_core import brief, filetree
 
     lines = []
     tree = filetree.describe(project)
@@ -338,7 +338,7 @@ def config(context=None):
     if preferences is None:
         raise RuntimeError('BB Kitsu Pipeline preferences are unavailable')
 
-    from BB_core import config as config_module
+    from .BB_core import config as config_module
 
     data = config_module.load(preferences.config_override or None)
     config = session.Config(data).with_roots(

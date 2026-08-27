@@ -16,7 +16,7 @@ from . import session
 
 
 def key():
-    from BB_core.context import SCENE_KEY
+    from .BB_core.context import SCENE_KEY
     return SCENE_KEY
 
 

@@ -1,19 +1,31 @@
-'''Locating the shared core from inside Blender.
+'''Binding the shared core into the add-on.
 
 BB_core is not a Blender module - it is the DCC-agnostic package every
-integration shares - so it has to be found in one of two places:
+integration shares - so it lives in one of two places:
 
+  * an installed extension, where the build script has copied BB_core in
+    beside this file, and a plain ``from .BB_core import ...`` finds it;
   * a development checkout, where the add-on sits at <repo>/blender/BB_pipeline
     and the core is at <repo>/BB_core. Nothing needs installing: edit the
     core, reload the add-on, done.
-  * an installed extension, where the build script has copied BB_core in
-    beside this file.
 
-Both cases end up with the core's parent directory on sys.path, so the rest of
-the add-on can just `from BB_core import ...`. If neither exists the add-on
-still registers - its panel reports the problem instead of Blender silently
-dropping the whole extension over an ImportError.
+The second case used to put the repository root on ``sys.path`` and import
+``BB_core`` as a top-level module. Blender's extension policy forbids both,
+and says so in the preferences - one warning for the ``sys.path`` write and
+one for every top-level module the extension brings with it. Neither is
+avoidable by moving files around here: this drive is exFAT, so the checkout
+cannot hold a junction the way Blender's extensions folder does.
+
+So the checkout is loaded *as* ``BB_pipeline.BB_core`` instead. Giving the
+spec a ``submodule_search_locations`` pointing at the real directory is what
+makes ``from .BB_core import settings`` resolve to the file being edited,
+with nothing added to ``sys.path`` and no top-level module in sight.
+
+If neither case works the add-on still registers - its panel reports the
+problem rather than Blender silently dropping the whole extension over an
+ImportError.
 '''
+import importlib.util
 import os
 import sys
 
@@ -27,36 +39,56 @@ error = ''
 available = False
 
 
-def _candidates():
-    # Development checkout first: when both exist, the working copy is the one
-    # being edited and is what the developer expects to be running.
-    yield os.path.abspath(os.path.join(HERE, '..', '..'))
-    yield HERE
+def _checkout_core():
+    '''<repo>/BB_core for a development install, or None.'''
+    root = os.path.abspath(os.path.join(HERE, '..', '..'))
+    folder = os.path.join(root, 'BB_core')
+    return folder if os.path.isdir(folder) else None
 
 
-def _locate():
-    for root in _candidates():
-        if os.path.isdir(os.path.join(root, 'BB_core')):
-            return root
-    return None
+def _bind(folder):
+    '''Load *folder* as this package's own BB_core submodule.'''
+    name = '%s.BB_core' % __package__
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(folder, '__init__.py'),
+        submodule_search_locations=[folder])
+    if spec is None or spec.loader is None:
+        raise ImportError('no package at %s' % folder)
+
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec_module, so the core's own relative imports find
+    # the package they belong to while it is still being built.
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
+    return module
 
 
 def bootstrap():
-    '''Put BB_core on sys.path. True when it is importable afterwards.'''
+    '''Make ``from .BB_core import ...`` work. True when it does.'''
     global error, available
 
-    root = _locate()
-    if root is None:
+    # Bundled beside this file: the shape every installed extension has.
+    try:
+        from . import BB_core  # noqa: F401
+        error = ''
+        available = True
+        return True
+    except ImportError:
+        pass
+
+    folder = _checkout_core()
+    if folder is None:
         error = ('BB_core not found next to the add-on - reinstall the '
                  'extension, or run it from a repository checkout')
         available = False
         return False
 
-    if root not in sys.path:
-        sys.path.insert(0, root)
-
     try:
-        import BB_core  # noqa: F401
+        _bind(folder)
     except Exception as exception:
         error = 'BB_core failed to import: %s' % exception
         available = False

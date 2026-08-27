@@ -91,7 +91,7 @@ def connect(context, password, background=False):
 
     def done(projects, error):
         if error:
-            from BB_core.kitsu import explain
+            from .BB_core.kitsu import explain
 
             state.client = None
             state.say(explain(error, preferences.server, preferences.email),
