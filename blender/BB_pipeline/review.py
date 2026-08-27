@@ -317,6 +317,14 @@ def submit(context, comment='', task_status_id=None):
     if entity_context is None or not entity_context.task_id:
         return 'that render has no Kitsu task attached'
 
+    # The render has to belong to what is open. Clearing it on file load
+    # covers the ordinary case; this covers the rest - a version cut since,
+    # a context re-stamped - because publishing one asset's picture against
+    # another is the kind of mistake nobody catches until review.
+    stale = _belongs_elsewhere(entity_context)
+    if stale:
+        return stale
+
     path, temporary, problem = prepare(context, last_render)
     if problem:
         return problem
@@ -387,6 +395,32 @@ def _version_up_after_publish(context, sequence=True):
     # From a timer, because this lands in a background job's callback and
     # saving a file is not something to do from under one.
     bpy.app.timers.register(later, first_interval=0.0)
+
+
+def _belongs_elsewhere(rendered):
+    """Why the last render is not this scene's, or '' when it is."""
+    from . import stamp
+
+    open_context, _source = stamp.read_current()
+    if open_context is None:
+        return ''
+
+    if (open_context.entity_id and rendered.entity_id
+            and open_context.entity_id != rendered.entity_id):
+        return ('that render is of %s, and this scene is %s - render again '
+                'before publishing' % (rendered.entity, open_context.entity))
+
+    if (open_context.task_id and rendered.task_id
+            and open_context.task_id != rendered.task_id):
+        return ('that render is a %s render and this scene is %s - render '
+                'again before publishing' % (rendered.task, open_context.task))
+
+    if open_context.version and rendered.version and             open_context.version != rendered.version:
+        return ('that render is from v%03d and this scene is v%03d - render '
+                'again before publishing'
+                % (rendered.version, open_context.version))
+
+    return ''
 
 
 def summary(context=None):

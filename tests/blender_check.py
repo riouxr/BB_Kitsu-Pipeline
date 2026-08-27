@@ -675,6 +675,43 @@ def main():
         finally:
             bpy.data.images.remove(made_up)
 
+        # -- a render belongs to the file it came out of ---------------------
+        # Opening another asset used to leave the previous render standing,
+        # still offered for publishing - and it published the previous
+        # asset's picture against the one now open.
+        from BB_core.context import EntityContext as _Ctx
+
+        other = _Ctx(project="VIL", group="Prop", entity="Kitchen-counter",
+                     task="precomp3d", entity_type="asset", version=2,
+                     project_id="p1", entity_id="OTHER", task_id="OTHERTASK")
+        session.state.last_render = {"kind": render.IMAGE, "stream": "main",
+                                     "directory": str(work_root),
+                                     "stem": "Kitchen-counter_v002",
+                                     "context": other, "movie": False}
+
+        note = review.submit(bpy.context)
+        check("render again" in note,
+              "publishing another entity's render is refused (%s)" % note)
+        check("Kitchen-counter" in note,
+              "and says which render it was (%s)" % note)
+
+        # The same render against the same entity but an older version.
+        here, _src = stamp.read_current()
+        if here is not None:
+            older = here.at_version(max(1, (here.version or 2) - 1))
+            session.state.last_render["context"] = older
+            note = review.submit(bpy.context)
+            check("render again" in note,
+                  "and so is one from an earlier version (%s)" % note)
+
+        # Loading a file clears it outright, which is the ordinary case.
+        from BB_pipeline import handlers as bb_handlers
+
+        session.state.last_render = {"context": other}
+        bb_handlers.on_load(None)
+        check(session.state.last_render is None,
+              "opening a file forgets the render that came before it")
+
         # -- a sequence can still be published as one image ------------------
         # MP4 is for sequences. A two-frame render is a sequence by the
         # letter of it and a look by intent, and Kitsu plays a two-frame

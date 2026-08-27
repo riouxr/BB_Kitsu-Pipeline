@@ -57,6 +57,12 @@ def restore_selection(entity_context, context=None):
 def on_load(_dummy):
     state = session.state
 
+    # A render belongs to the file it came out of. Left standing across a
+    # file load it is still offered for publishing, and publishes the
+    # previous asset's picture against the one now open.
+    state.last_render = None
+    state.render_restore = None
+
     entity_context, source = stamp.read_current()
     state.context = entity_context
 

@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.9.1.zip`.
+`dist/BB_pipeline-0.9.2.zip`.
 
 ### Develop
 
@@ -383,6 +383,16 @@ so the raw list is every status anybody has ever needed on any production. The
 browser offers only what the selected project uses — four rather than twenty —
 falling back to the whole list when a project names none, which is what Kitsu
 itself does.
+
+### A render belongs to the file it came from
+
+Opening another file clears the last render. Left standing it was still
+offered for publishing, and published the previous asset's picture against
+the one now open — the sort of mistake nobody catches until review.
+
+Publishing also refuses a render that does not belong to the open scene at
+all: a different entity, a different task, or an earlier version. It says
+which, so the answer is obvious — render again.
 
 ### Renders made by hand
 
