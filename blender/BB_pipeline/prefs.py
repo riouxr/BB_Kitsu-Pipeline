@@ -9,44 +9,109 @@ text, so it goes to the Windows Credential Manager through the core's
 credentials module instead - the same store the standalone tools use.
 '''
 import bpy
-from bpy.props import (BoolProperty, EnumProperty, IntProperty,
+from bpy.props import (BoolProperty, CollectionProperty, EnumProperty,
+                       IntProperty,
                        StringProperty)
-from bpy.types import AddonPreferences
+from bpy.types import AddonPreferences, Operator, PropertyGroup
 
 from . import core, session
 
 
-def parse_volumes(text):
-    """``E: = /Volumes/Misery`` lines into the table the core reads.
+class BB_VolumeMapping(PropertyGroup):
+    """One disk, as this machine mounts it."""
 
-    Accepts one mapping per line or several separated by commas, because a
-    single-line preference field is what Blender gives us and people will
-    type both.
-    """
+    drive: StringProperty(
+        name='Drive',
+        description='The drive letter a project root is written with, e.g. E:',
+        default='',
+        update=lambda self, context: _save_volumes(context),
+    )
+    mount: StringProperty(
+        name='Mounted at',
+        description='Where this machine mounts that disk, e.g. /Volumes/Misery',
+        subtype='DIR_PATH',
+        default='',
+        update=lambda self, context: _save_volumes(context),
+    )
+
+
+def _table(preferences):
+    """The rows as the table the core reads."""
     table = {}
-    for chunk in str(text or "").replace(",", "\n").splitlines():
-        chunk = chunk.strip()
-        if not chunk or "=" not in chunk:
-            continue
-        key, _sep, mount = chunk.partition("=")
-        key = key.strip().rstrip(":\\/")
-        mount = mount.strip()
+    for row in preferences.volume_list:
+        key = (row.drive or '').strip().rstrip(':\\/')
+        mount = (row.mount or '').strip()
         if key and mount:
-            table[key.upper() + ":"] = mount
+            table[key.upper() + ':'] = mount
     return table
 
 
-def format_volumes(table):
-    """The table as the preference field shows it."""
-    return ", ".join("%s = %s" % (key, mount)
-                     for key, mount in sorted((table or {}).items()))
-
-
-def _on_volumes(self, context):
-    """Push the table into the settings file, where the core reads it."""
+def _save_volumes(context=None):
+    """Write the rows through to the settings file, which the core reads."""
+    preferences = get(context)
+    if preferences is None:
+        return
     from .BB_core import settings as core_settings
+    core_settings.save({'volumes': _table(preferences)})
 
-    core_settings.save({'volumes': parse_volumes(self.volumes)})
+
+def seed_volumes():
+    """Fill the rows from the settings file, once, at startup.
+
+    The settings file is the source of truth - the Nuke side and a
+    hand-edited install both write it - so the preference rows are an editor
+    for it rather than a second copy. Deferred to a timer because the add-on
+    preferences do not exist yet while register() is running.
+    """
+    try:
+        preferences = get()
+    except Exception:
+        return None
+    if preferences is None:
+        return None
+
+    if len(preferences.volume_list):
+        return None
+
+    from .BB_core import settings as core_settings
+    for key, mount in sorted((core_settings.get('volumes') or {}).items()):
+        row = preferences.volume_list.add()
+        row.drive = key
+        row.mount = mount
+    return None
+
+
+class BB_OT_volume_add(Operator):
+    bl_idname = 'bb.volume_add'
+    bl_label = 'Add Volume'
+    bl_description = 'Map another drive to where this machine mounts it'
+    bl_options = {'INTERNAL'}
+
+    drive: StringProperty(default='')
+
+    def execute(self, context):
+        preferences = get(context)
+        row = preferences.volume_list.add()
+        row.drive = self.drive
+        preferences.volume_index = len(preferences.volume_list) - 1
+        _save_volumes(context)
+        return {'FINISHED'}
+
+
+class BB_OT_volume_remove(Operator):
+    bl_idname = 'bb.volume_remove'
+    bl_label = 'Remove Volume'
+    bl_description = 'Forget this mapping'
+    bl_options = {'INTERNAL'}
+
+    index: IntProperty(default=-1)
+
+    def execute(self, context):
+        preferences = get(context)
+        if 0 <= self.index < len(preferences.volume_list):
+            preferences.volume_list.remove(self.index)
+            _save_volumes(context)
+        return {'FINISHED'}
 
 
 class BBPipelinePreferences(AddonPreferences):
@@ -166,15 +231,8 @@ class BBPipelinePreferences(AddonPreferences):
         default=True,
     )
 
-    volumes: StringProperty(
-        name='Volumes',
-        description=('Where this machine mounts the disks a project root '
-                     'names, for example  E: = /Volumes/Misery.  A root '
-                     'written on one platform means nothing on another '
-                     'without this'),
-        default='',
-        update=_on_volumes,
-    )
+    volume_list: CollectionProperty(type=BB_VolumeMapping)
+    volume_index: IntProperty(default=0)
 
     work_root: StringProperty(
         name='Work Root',
@@ -280,13 +338,13 @@ class BBPipelinePreferences(AddonPreferences):
 
 
 def _draw_volumes(layout, preferences, context):
-    """The volume table, and what the current root resolves to through it.
+    r"""The volume table, and what the current roots resolve to through it.
 
-    Shown only when it is needed - a machine whose roots are already spelled
-    for it has nothing to map, and an empty field with a cryptic label is
-    just noise. What makes this worth a panel is that the failure it
-    prevents reads as a missing setting: a root written on Windows arrives
-    on a Mac as E:\\Show, which is not a path there at all.
+    A list rather than one field: a show is rarely on one disk, and the
+    plates, the renders and the work can each be somewhere different. What
+    makes this worth a panel at all is that the failure it prevents reads as
+    a missing setting - a root written on Windows arrives on a Mac as
+    E:\Show, which is not a path there.
     """
     from .BB_core import volumes as core_volumes
 
@@ -297,25 +355,35 @@ def _draw_volumes(layout, preferences, context):
 
     wanted = []
     for key in ('work_root', 'render_root'):
-        value = (roots.get(key) or '').strip()
-        missing = core_volumes.unresolved(value)
+        missing = core_volumes.unresolved((roots.get(key) or '').strip())
         if missing and missing not in wanted:
             wanted.append(missing)
 
-    if not wanted and not preferences.volumes.strip():
+    if not wanted and not len(preferences.volume_list):
         return
 
     box = layout.box()
-    box.prop(preferences, 'volumes')
+    header = box.row()
+    header.label(text='Volumes', icon='DISK_DRIVE')
+    header.operator('bb.volume_add', text='', icon='ADD').drive = ''
 
-    if wanted:
+    for index, row in enumerate(preferences.volume_list):
+        line = box.row(align=True)
+        line.prop(row, 'drive', text='')
+        line.prop(row, 'mount', text='')
+        line.operator('bb.volume_remove', text='', icon='X').index = index
+
+    for missing in wanted:
         note = box.row()
         note.alert = True
-        note.label(text='no mapping for %s on this machine' % ', '.join(wanted),
+        note.label(text='no mapping for %s on this machine' % missing,
                    icon='ERROR')
-        hint = box.row()
-        hint.enabled = False
-        hint.label(text='for example  %s = /Volumes/YourDisk' % wanted[0])
+        # Pre-filled, so the row that is missing is one click rather than a
+        # blank the artist has to know how to fill in.
+        note.operator('bb.volume_add', text='Map %s' % missing,
+                      icon='ADD').drive = missing
+
+    if wanted:
         return
 
     for key in ('work_root', 'render_root'):
@@ -468,14 +536,22 @@ def _selected_project(context=None):
         return None
 
 
-classes = (BBPipelinePreferences,)
+classes = (BB_VolumeMapping, BB_OT_volume_add, BB_OT_volume_remove,
+           BBPipelinePreferences)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
+    # The rows are an editor for the settings file, so they are filled from
+    # it once the preferences exist - which is not yet.
+    bpy.app.timers.register(seed_volumes, first_interval=0.1)
+
 
 def unregister():
+    if bpy.app.timers.is_registered(seed_volumes):
+        bpy.app.timers.unregister(seed_volumes)
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

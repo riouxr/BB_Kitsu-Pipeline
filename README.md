@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.4.1.zip`.
+`dist/BB_pipeline-0.4.2.zip`.
 
 ### Develop
 
@@ -629,17 +629,19 @@ So each machine is told where it mounts the disks a root can name. This lives
 in the settings file, never in Kitsu, because it describes the computer and
 not the show:
 
-Set it in **Edit ▸ Preferences ▸ Add-ons ▸ BB Kitsu Pipeline ▸ Volumes**, one
-mapping per entry:
+Set it in **Edit ▸ Preferences ▸ Add-ons ▸ BB Kitsu Pipeline ▸ Volumes** —
+a list, one row per disk, because a show is rarely on one: the plates, the
+renders and the work can each be somewhere different.
 
-```
-E: = /Volumes/Misery, I: = /Volumes/I 4TB_Externe
-```
+The panel appears when a root names a disk this machine cannot resolve, names
+the letter that is missing, and offers a pre-filled row for it — one click
+rather than a blank field you have to know how to fill in. Once mapped it
+shows what each root resolves to here, so it can be checked before anything
+is opened.
 
-The panel appears when a root names a disk this machine has no mapping for,
-says which letter is missing, and once mapped shows what the root resolves to
-here. It is written through to the settings file, which is what the core
-reads:
+The rows are an editor for the settings file, which is what the core actually
+reads, and are filled from it at startup — so a mapping made by hand, or by
+the Nuke side, shows up in the list:
 
 ```json
 "volumes": {"E:": "/Volumes/Misery", "I:": "/Volumes/I 4TB_Externe"}
