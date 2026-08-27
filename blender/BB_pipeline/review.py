@@ -35,6 +35,10 @@ PLAYABLE = {"mp4", "mov", "png", "jpg", "jpeg", "webm", "gif"}
 LINEAR = "Linear Rec.709"
 
 
+# What counts as a sequence once it has been prepared for Kitsu.
+MOVIES = {'.mp4', '.mov', '.avi', '.mkv'}
+
+
 def review_size(context, width, height):
     """The size to upload at - full resolution unless a cap is configured.
 
@@ -321,6 +325,10 @@ def submit(context, comment='', task_status_id=None):
     task_id = entity_context.task_id
     text = comment or ('%s rendered from Blender' % last_render.get('stem'))
 
+    # What actually went up, not what was rendered: asking for one image out
+    # of a sequence publishes a look, and a look should not burn a version.
+    was_sequence = os.path.splitext(str(path))[1].lower() in MOVIES
+
     def work():
         preferences = prefs.get(context)
         return client.publish_preview(
@@ -338,13 +346,13 @@ def submit(context, comment='', task_status_id=None):
             state.say('Kitsu upload failed: %s' % error, error=True)
             return
         state.say('submitted %s to Kitsu' % os.path.basename(path))
-        _version_up_after_publish(context)
+        _version_up_after_publish(context, sequence=was_sequence)
 
     session.run('submitting to Kitsu', work, done, background=True)
     return 'uploading %s' % os.path.basename(path)
 
 
-def _version_up_after_publish(context):
+def _version_up_after_publish(context, sequence=True):
     """Cut the next version once a render has been published.
 
     So the work file and the Kitsu revision stay in step: publishing three
@@ -359,7 +367,13 @@ def _version_up_after_publish(context):
     from . import prefs as _prefs
 
     preferences = _prefs.get(context)
-    if preferences is not None and not preferences.version_up_on_publish:
+    when = getattr(preferences, 'version_up_on_publish', 'SEQUENCE')
+    if when == 'NEVER':
+        return
+    if when == 'SEQUENCE' and not sequence:
+        # A single image is a look, not a delivery. Burning a version on
+        # every quick render would make the version number count glances
+        # rather than pieces of work.
         return
 
     def later():

@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.7.1.zip`.
+`dist/BB_pipeline-0.8.0.zip`.
 
 ### Develop
 
@@ -339,8 +339,20 @@ The version that publishing cuts does not post a comment of its own — the
 publish has just posted one, and asking again is how a single piece of work
 becomes two revisions in the review history.
 
-Turn it off with **Version Up on Publish** in the preferences, or
-`version_up_on_publish` in the settings file for Nuke.
+**Version Up on Publish** decides when: **Sequences Only** by default, so an
+animation closes a version and a single image does not. A few quick looks
+rendered from one file are looks, not deliveries, and making each burn a
+version would leave the number counting glances. **Always** and **Never** are
+there for studios that want it otherwise; Nuke reads `version_up_on_publish`
+from the settings file.
+
+### Statuses belong to the show
+
+Kitsu keeps task statuses studio-wide and each project picks the ones it uses,
+so the raw list is every status anybody has ever needed on any production. The
+browser offers only what the selected project uses — four rather than twenty —
+falling back to the whole list when a project names none, which is what Kitsu
+itself does.
 
 ### Movie or image
 

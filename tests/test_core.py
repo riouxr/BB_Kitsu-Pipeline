@@ -1454,5 +1454,51 @@ class TestRootsUseTheVolumeTable(unittest.TestCase):
         self.assertIn("Z:", str(caught.exception))
 
 
+class TestStatusesAreScopedToTheProject(unittest.TestCase):
+    """Kitsu keeps task statuses studio-wide; a project picks the ones it uses.
+
+    Offering the raw list means offering every status anybody has ever needed
+    on any show - twenty of them where this production has four - which is
+    how a shot ends up marked with another production's workflow.
+    """
+
+    ALL = [
+        {"id": "s1", "name": "Work In Progress"},
+        {"id": "s2", "name": "Retake"},
+        {"id": "s3", "name": "Client Approved"},
+        {"id": "s4", "name": "Face2Do"},
+        {"id": "s5", "name": "BG_Done"},
+    ]
+
+    def names(self, project):
+        from BB_core.kitsu import statuses_for
+        return [row["name"] for row in statuses_for(project, self.ALL)]
+
+    def test_only_what_the_project_uses(self):
+        project = {"task_statuses": ["s1", "s2", "s3"]}
+        self.assertEqual(self.names(project),
+                         ["Work In Progress", "Retake", "Client Approved"])
+
+    def test_another_production_is_not_offered(self):
+        project = {"task_statuses": ["s1"]}
+        self.assertNotIn("Face2Do", self.names(project))
+
+    def test_a_project_naming_none_gets_them_all(self):
+        # What Kitsu itself falls back to; refusing to offer any status would
+        # make publishing impossible.
+        self.assertEqual(len(self.names({"task_statuses": []})), 5)
+        self.assertEqual(len(self.names({})), 5)
+        self.assertEqual(len(self.names(None)), 5)
+
+    def test_ids_that_no_longer_exist_do_not_empty_the_list(self):
+        # A status deleted studio-wide is still listed on old projects.
+        self.assertEqual(len(self.names({"task_statuses": ["gone"]})), 5)
+
+    def test_the_order_of_the_studio_list_is_kept(self):
+        project = {"task_statuses": ["s3", "s1"]}
+        self.assertEqual(self.names(project),
+                         ["Work In Progress", "Client Approved"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

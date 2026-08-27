@@ -237,11 +237,18 @@ class BBPipelinePreferences(AddonPreferences):
     volume_list: CollectionProperty(type=BB_VolumeMapping)
     volume_index: IntProperty(default=0)
 
-    version_up_on_publish: BoolProperty(
+    version_up_on_publish: EnumProperty(
         name='Version Up on Publish',
-        description=('Cut the next version after publishing a render, so the '
+        description=('When publishing should cut the next version, so the '
                      'work file and the Kitsu revision stay in step'),
-        default=True,
+        items=[
+            ('SEQUENCE', 'Sequences Only',
+             'After publishing an animation, but not a single image - so a '
+             'few quick looks from one file do not each burn a version'),
+            ('ALWAYS', 'Always', 'After every publish'),
+            ('NEVER', 'Never', 'Leave the version alone; cut it by hand'),
+        ],
+        default='SEQUENCE',
     )
 
     set_output_path: BoolProperty(

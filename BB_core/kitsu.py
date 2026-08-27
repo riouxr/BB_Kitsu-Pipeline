@@ -54,6 +54,26 @@ class AuthError(KitsuError):
     """Login failed, or the session is no longer valid."""
 
 
+def statuses_for(project, statuses):
+    """The statuses one project actually uses, out of the studio's list.
+
+    Kitsu keeps task statuses studio-wide and each project picks the ones it
+    uses, so the raw list is every status anybody has ever needed on any
+    show. Offering all twenty when this show has four is how a shot ends up
+    marked with another production's workflow.
+
+    Falls back to the whole list when a project names none, which is what
+    Kitsu itself does.
+    """
+    wanted = (project or {}).get("task_statuses")
+    if not wanted:
+        return list(statuses or [])
+
+    allowed = set(wanted)
+    picked = [row for row in (statuses or []) if row.get("id") in allowed]
+    return picked or list(statuses or [])
+
+
 def explain(error, server="", email=""):
     """A short, human answer to why a connection failed.
 

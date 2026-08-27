@@ -188,7 +188,10 @@ def project_selected(context):
         state.assets = assets
         state.task_types = {t['id']: t for t in task_types}
         state.departments = {d['id']: d for d in departments}
-        state.statuses = statuses
+        # Scoped to this show: the raw list is every status any
+        # production has ever needed.
+        from .BB_core.kitsu import statuses_for
+        state.statuses = statuses_for(state.project(project_id), statuses)
         state.task_departments = _task_departments(context)
 
         state.say('%d shot(s), %d asset(s)' % (len(shots), len(assets)))
@@ -281,7 +284,10 @@ def refresh_project(context=None):
         state.assets = assets
         state.task_types = {t['id']: t for t in task_types}
         state.departments = {d['id']: d for d in departments}
-        state.statuses = statuses
+        # Scoped to this show: the raw list is every status any
+        # production has ever needed.
+        from .BB_core.kitsu import statuses_for
+        state.statuses = statuses_for(state.project(project_id), statuses)
         state.task_departments = _task_departments(context)
 
         known = ({s['id'] for s in sequences} | {s['id'] for s in shots}

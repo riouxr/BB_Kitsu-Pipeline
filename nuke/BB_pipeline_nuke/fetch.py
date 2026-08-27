@@ -99,7 +99,11 @@ def project_selected(project_id):
         task_types = client.task_types()
         state.task_types = {t['id']: t for t in task_types}
         state.departments = {d['id']: d for d in client.departments()}
-        state.statuses = client.task_statuses()
+        # Scoped to this show: Kitsu keeps statuses studio-wide and each
+        # project picks the ones it uses.
+        from BB_core.kitsu import statuses_for
+        state.statuses = statuses_for(state.project(project_id),
+                                      client.task_statuses())
     except KitsuError as error:
         state.say(str(error), error=True)
         return
