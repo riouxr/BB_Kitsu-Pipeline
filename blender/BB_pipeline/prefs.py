@@ -155,8 +155,11 @@ class BBPipelinePreferences(AddonPreferences):
     preview_on_save: BoolProperty(
         name='Attach Viewport Preview',
         description=('Render the viewport and attach it to the comment, which '
-                     'Kitsu also uses as the task thumbnail'),
-        default=True,
+                     'Kitsu also uses as the task thumbnail. Off by default: '
+                     'it puts a revision in the review history for every save, '
+                     'competing with the renders that were published on '
+                     'purpose'),
+        default=False,
     )
 
     preview_percentage: IntProperty(

@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.7.0.zip`.
+`dist/BB_pipeline-0.7.1.zip`.
 
 ### Develop
 
@@ -313,6 +313,20 @@ wrong, and the first anybody knows is a comp reading an older render. Nuke
 does the same to every Kitsu Write in the script.
 
 Turn it off with **Set Output Path** in the preferences.
+
+### What a save posts
+
+**Update Kitsu on Save** posts a comment naming the version — useful history,
+and on by default.
+
+**Attach Viewport Preview** is **off** by default. On, it puts an image
+revision in Kitsu for every save, which competes in the review player with
+the renders that were published on purpose: four saves and four publishes
+give eight revisions where four were meant. Turn it on if a viewport grab per
+save is what you want.
+
+Changing the default only affects a fresh install — Blender keeps preferences
+once they exist, so an existing setup needs the box unticking by hand.
 
 ### One revision per version
 

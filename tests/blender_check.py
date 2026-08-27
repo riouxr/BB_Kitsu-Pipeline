@@ -271,7 +271,13 @@ def main():
               "publish is skipped when switched off")
 
         preferences.publish_on_save = True
+        # Already the default, and set anyway because this half is about
+        # what a save posts, not about what the default happens to be.
         preferences.preview_on_save = False   # no GPU in background mode
+
+        check(type(preferences).bl_rna.properties['preview_on_save'].default
+              is False,
+              "a save does not attach a viewport preview unless asked")
         check(publish.why_not(bpy.context, ctx) == "",
               "a stamped context connected to Kitsu can publish")
 
