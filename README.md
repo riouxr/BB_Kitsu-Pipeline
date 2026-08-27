@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.4.2.zip`.
+`dist/BB_pipeline-0.5.0.zip`.
 
 ### Develop
 
@@ -276,6 +276,31 @@ arrives as a string. Broadcast rates keep their pulldown — 23.976 becomes
 seconds and only shows up once a cut is conformed.
 
 Assets have no frame range, so none of it applies to them.
+
+### Where the scene renders to
+
+Opening or creating a version points the scene's **own** output path at that
+version's render folder, so pressing F12 by hand writes where the pipeline
+expects rather than into the startup file's `/tmp` or the last shot you had
+open:
+
+```
+<render_root>/sc01/sh03/Lighting/internalRender/main/<version>/<version>.
+<render_root>/assets/Prop/knife/Modeling/internalRender/main/<version>/<version>.
+```
+
+A shot goes under its sequence and shot, an asset under `assets/` and its
+type and name. The trailing dot is deliberate: Blender appends the frame and
+the extension itself, giving `<version>.0001.exr` — the same names the
+pipeline's own render operators produce, so the review panel finds either.
+
+It is set before anything else on open, and for assets as well as shots. An
+asset carries no frame range, so the Kitsu check has nothing to say about a
+prop — but a prop still renders, and an output path left pointing at the last
+shot is not a disagreement to report, it is frames written into the wrong
+folder.
+
+Turn it off with **Set Output Path** in the preferences.
 
 ### Rendering and review
 

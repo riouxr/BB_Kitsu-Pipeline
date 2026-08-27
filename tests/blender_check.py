@@ -761,6 +761,55 @@ def main():
         check(thumbnails.version_icon(missing) == 0,
               "which the browser reports as no icon rather than raising")
 
+        # -- the scene's own output path ------------------------------------
+        # Blender's output path is otherwise whatever it was last set to -
+        # the startup file's /tmp, or the previous shot - so pressing F12 by
+        # hand writes somewhere unrelated to what is open.
+        from BB_pipeline import scenesync as bb_scenesync
+
+        # Point at a shot explicitly: an earlier section leaves the browser
+        # on an asset, and this half is about the shot layout.
+        props_now = properties.get()
+        with properties.suspend_updates():
+            props_now.entity_type = "SHOT"
+            props_now.sequence = SEQUENCE["id"]
+            props_now.shot = SHOT["id"]
+            props_now.task = TASK["id"]
+
+        shot_context = fetch.current_context(bpy.context)
+        note = bb_scenesync.set_output(bpy.context, shot_context)
+        wanted = bb_scenesync.output_path(shot_context, bpy.context)
+        scene_path = bpy.context.scene.render.filepath
+
+        check(wanted and os.path.normpath(scene_path) == os.path.normpath(wanted),
+              "opening a version points the scene's output at it")
+        check("sc01" in scene_path or SEQUENCE["name"] in scene_path,
+              "under the sequence and shot (%s)" % scene_path)
+        check(note, "and says so, rather than changing it silently")
+
+        # Setting it twice is not a change worth reporting.
+        check(not bb_scenesync.set_output(bpy.context, shot_context),
+              "an output path already correct is left alone")
+
+        # An asset has no frame range at all, so the Kitsu check has nothing
+        # to say about a prop - but a prop still renders, and this is the
+        # case the first attempt skipped.
+        with properties.suspend_updates():
+            props_now.entity_type = "ASSET"
+            props_now.asset_type = ASSET_TYPE["id"]
+            props_now.asset = ASSET["id"]
+            props_now.task = TASK["id"]
+        asset_context = fetch.current_context(bpy.context)
+        if asset_context is not None:
+            bb_scenesync.set_output(bpy.context, asset_context)
+            asset_path = bpy.context.scene.render.filepath
+            check("assets" in asset_path.replace(chr(92), "/"),
+                  "a prop renders under assets/ (%s)" % asset_path)
+            check(ASSET["name"] in asset_path,
+                  "in its own folder (%s)" % ASSET["name"])
+        with properties.suspend_updates():
+            props_now.entity_type = "SHOT"
+
         # -- leftovers from an older build --------------------------------
         # Replacing the files does not undo an import: until 0.3.1 the core
         # went on sys.path and was imported top-level, and those entries

@@ -234,6 +234,14 @@ class BBPipelinePreferences(AddonPreferences):
     volume_list: CollectionProperty(type=BB_VolumeMapping)
     volume_index: IntProperty(default=0)
 
+    set_output_path: BoolProperty(
+        name='Set Output Path',
+        description=("Point the scene's own render output at the version "
+                     "that is open, so pressing F12 by hand writes where "
+                     "the pipeline expects"),
+        default=True,
+    )
+
     work_root: StringProperty(
         name='Work Root',
         description='Where scene files live. Shot folders are built under this',
@@ -315,6 +323,7 @@ class BBPipelinePreferences(AddonPreferences):
         row.prop(self, 'still_quality')
 
         column.separator()
+        column.prop(self, 'set_output_path')
         column.prop(self, 'frame_range_on_create')
         column.prop(self, 'frame_range_on_open')
 

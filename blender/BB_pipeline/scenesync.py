@@ -18,6 +18,8 @@ Two moments matter, and they are treated differently on purpose:
 Assets have no frame range. They do inherit the project resolution,
 because a turntable that does not match the show is not much use.
 '''
+import os
+
 import bpy
 
 from . import prefs, session
@@ -128,20 +130,75 @@ def apply(scene, settings):
     return changed
 
 
+def output_path(entity_context, context=None):
+    """Where this version's renders belong, as Blender's output prefix.
+
+    None when there is nothing to say - no context, or no render root
+    configured yet. A missing root is not an error here: the browser reports
+    that in its own words, and a scene should still open.
+    """
+    if entity_context is None or not entity_context.is_complete():
+        return None
+
+    from .BB_core import workfiles
+
+    try:
+        config = prefs.config(context)
+        return str(workfiles.render_output(entity_context, 'main', config))
+    except Exception:
+        return None
+
+
+def set_output(context, entity_context):
+    """Point the scene's own output at this version. Returns a note, or ''.
+
+    Blender's output path is otherwise whatever it was last set to - the
+    startup file's /tmp, or the previous shot - so pressing F12 by hand
+    writes somewhere that has nothing to do with what is open. Setting it
+    here means the scene's Output panel and the pipeline's own render
+    operators name the same folder rather than two that have to be kept in
+    step.
+    """
+    preferences = prefs.get(context)
+    if preferences is not None and not preferences.set_output_path:
+        return ''
+
+    wanted = output_path(entity_context, context)
+    if not wanted:
+        return ''
+
+    scene = bpy.context.scene
+    if scene is None:
+        return ''
+
+    current = scene.render.filepath or ''
+    if os.path.normpath(current) == os.path.normpath(wanted):
+        return ''
+
+    scene.render.filepath = wanted
+    # The folder, not the prefix - the prefix ends in the version name.
+    return 'output path -> %s' % os.path.dirname(wanted)
+
+
 def on_create(context, entity_context):
     '''Set the range and rate on a scene that is about to be saved.
 
     Returns a short note for the operator to report, or ''.
     '''
     preferences = prefs.get(context)
+
+    # Above the frame-range guard: that preference is about the range, and a
+    # new version still has to render somewhere sensible.
+    output = set_output(context, entity_context)
+
     if preferences is not None and not preferences.frame_range_on_create:
-        return ''
+        return output
 
     settings = kitsu_settings(entity_context, refresh=False)
-    if not settings:
-        return ''
+    changed = apply(bpy.context.scene, settings) if settings else []
+    if output:
+        changed = list(changed) + [output]
 
-    changed = apply(bpy.context.scene, settings)
     if not changed:
         return ''
     return 'set %s from Kitsu' % ', '.join(changed)
@@ -150,18 +207,25 @@ def on_create(context, entity_context):
 def on_open(context, entity_context):
     '''Check an opened scene against Kitsu. Returns a note, or ''.'''
     preferences = prefs.get(context)
+
+    # First, and outside every early return below. An asset carries no frame
+    # range, so the Kitsu check has nothing to say about a prop - but a prop
+    # still renders, and an output path left pointing at the last shot is not
+    # a disagreement to report, it is frames written into the wrong folder.
+    output = set_output(context, entity_context)
+
     mode = preferences.frame_range_on_open if preferences else 'WARN'
     if mode == 'IGNORE':
-        return ''
+        return output
 
     settings = kitsu_settings(entity_context, refresh=True)
     if not settings:
-        return ''
+        return output
 
     scene = bpy.context.scene
     changed = differences(scene, settings)
     if not changed:
-        return ''
+        return output
 
     if mode == 'APPLY':
         apply(scene, settings)

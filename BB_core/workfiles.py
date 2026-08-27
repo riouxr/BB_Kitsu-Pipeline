@@ -195,6 +195,23 @@ def render_dir(context, stream="main", config=None):
     )
 
 
+def render_output(context, stream="main", config=None):
+    """Where a host application should point its own output, as a prefix.
+
+    The version folder plus the version's name and a trailing dot, so a host
+    that appends the frame and the extension itself - which Blender does -
+    lands on the same ``name_v003.0001.exr`` the pipeline's own render
+    operators produce, and the review panel can find either.
+
+    Kept here rather than in the add-on because the whole point is that the
+    scene's output path and the pipeline's render path are one answer, not
+    two that have to be kept in step.
+    """
+    config = (config or Config()).for_project(context.project)
+    stem = context.versioned(config=config)
+    return render_dir(context, stream, config) / (stem + ".")
+
+
 def render_versions(context, stream="main", config=None):
     """Every rendered version of one stream on disk, oldest first.
 
