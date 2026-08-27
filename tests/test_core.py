@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from BB_core import (brief, filetree, frames, naming,  # noqa: E402
-                       versioning, workfiles)
+                       versioning, volumes, workfiles)
 from BB_core.config import Config  # noqa: E402
 from BB_core.context import EntityContext  # noqa: E402
 
@@ -1240,6 +1240,110 @@ class TestWindowsPathsInABrief(unittest.TestCase):
 
     def test_nothing_to_report_without_a_block(self):
         self.assertEqual(brief.problem({"description": "just notes"}), "")
+
+
+class TestVolumeTranslation(unittest.TestCase):
+    r"""One root in Kitsu, two platforms reading it.
+
+    A brief written on Windows says ``E:\Misery Loves Company``. On macOS the
+    same disk is under /Volumes with whatever name it was formatted with, and
+    the backslashes are not separators there at all - PurePosixPath reads the
+    whole thing as one filename. The mapping is machine-local, so the brief
+    never has to know which computer is reading it.
+
+    The platform is passed in rather than mocked, so both directions are
+    exercised from whichever machine runs the tests.
+    """
+
+    MAP = {"E:": "/Volumes/Misery", "I:": "/Volumes/I 4TB_Externe"}
+
+    def mac(self, value):
+        return volumes.localise(value, self.MAP, "darwin")
+
+    def win(self, value):
+        return volumes.localise(value, self.MAP, "win32")
+
+    def test_a_windows_root_becomes_a_volume(self):
+        self.assertEqual(self.mac("E:\\Misery Loves Company"),
+                         "/Volumes/Misery/Misery Loves Company")
+
+    def test_a_space_in_the_volume_name_survives(self):
+        self.assertEqual(self.mac("I:\\Addon Developpment\\Github"),
+                         "/Volumes/I 4TB_Externe/Addon Developpment/Github")
+
+    def test_the_drive_alone_is_the_mount_point(self):
+        self.assertEqual(self.mac("E:\\"), "/Volumes/Misery")
+        self.assertEqual(self.mac("E:"), "/Volumes/Misery")
+
+    def test_a_volume_becomes_a_drive_on_windows(self):
+        self.assertEqual(self.win("/Volumes/Misery/Shots"), "E:\\Shots")
+
+    def test_a_bare_mount_point_becomes_the_drive(self):
+        self.assertEqual(self.win("/Volumes/I 4TB_Externe"), "I:\\")
+
+    def test_a_root_already_right_is_left_alone(self):
+        self.assertEqual(self.mac("/Volumes/Misery/Shots"),
+                         "/Volumes/Misery/Shots")
+        self.assertEqual(self.win("E:\\Shots"), "E:\\Shots")
+
+    def test_an_unmapped_drive_is_not_invented(self):
+        # Dropping the letter would give /Foo/Bar - a real-looking root that
+        # is not the one anybody meant, failing later and somewhere else.
+        self.assertEqual(self.mac("Z:\\Foo\\Bar"), "Z:\\Foo\\Bar")
+
+    def test_an_unmapped_drive_is_named(self):
+        self.assertEqual(volumes.unresolved("Z:\\Foo", self.MAP, "darwin"), "Z:")
+        self.assertEqual(volumes.unresolved("E:\\Foo", self.MAP, "darwin"), "")
+
+    def test_windows_never_reports_one_unresolved(self):
+        self.assertEqual(volumes.unresolved("Z:\\Foo", self.MAP, "win32"), "")
+
+    def test_an_unmapped_volume_on_windows_is_left_alone(self):
+        self.assertEqual(self.win("/Volumes/Nothing/Here"),
+                         "/Volumes/Nothing/Here")
+
+    def test_the_table_may_spell_the_key_either_way(self):
+        for key in ("e", "E", "e:", "E:", "E:\\"):
+            self.assertEqual(
+                volumes.localise("E:\\Shots", {key: "/Volumes/Misery"}, "darwin"),
+                "/Volumes/Misery/Shots", "key %r" % key)
+
+    def test_an_empty_table_changes_nothing_it_cannot(self):
+        self.assertEqual(volumes.localise("/Volumes/X/Y", {}, "darwin"),
+                         "/Volumes/X/Y")
+        self.assertEqual(volumes.localise("", {}, "darwin"), "")
+
+    def test_a_unc_path_is_not_touched(self):
+        # No drive letter and no mount in the table, so there is nothing to
+        # translate. Left exactly as written rather than rewritten to
+        # backslashes: Windows accepts forward slashes, and a share both
+        # platforms reach the same way must survive untouched.
+        self.assertEqual(self.win("//server/share/show"), "//server/share/show")
+
+class TestRootsUseTheVolumeTable(unittest.TestCase):
+    """The translation has to happen where a root becomes a path."""
+
+    def context(self):
+        return EntityContext(project="PizzaHunt", group="sc01", entity="sh01",
+                             task="Comp", entity_type="shot", version=1)
+
+    def test_a_root_is_localised_on_the_way_to_a_path(self):
+        config = Config()
+        config.paths["work_root"] = "/Volumes/Misery"
+        # On Windows this is the interesting direction; on a Mac it is a
+        # no-op, which is why the assertion is about the tail rather than
+        # the whole path.
+        folder = workfiles.work_dir(self.context(), config)
+        self.assertIn("sc01", folder.parts)
+
+    def test_an_unmapped_drive_is_reported_not_guessed(self):
+        if sys.platform.startswith("win"):
+            self.skipTest("a drive letter needs no mapping on Windows")
+        config = Config()
+        config.paths["work_root"] = "Z:\\Show"
+        with self.assertRaises(workfiles.RootNotConfigured) as caught:
+            workfiles.work_dir(self.context(), config)
+        self.assertIn("Z:", str(caught.exception))
 
 
 if __name__ == "__main__":

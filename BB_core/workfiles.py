@@ -11,7 +11,7 @@ import os
 import re
 from pathlib import Path
 
-from . import naming, versioning
+from . import naming, versioning, volumes
 from .config import Config
 
 # The frame number in a rendered file name: the last run of digits before
@@ -32,7 +32,20 @@ def _root(config, key):
             "paths.%s is not set - configure it in the add-on preferences "
             "or in your config.toml" % key
         )
-    return Path(value)
+
+    # One brief serves the whole studio, so the root it carries is spelled
+    # for whichever platform wrote it. This is the only place a root becomes
+    # a real path, so it is the only place that has to know.
+    missing = volumes.unresolved(value)
+    if missing:
+        raise RootNotConfigured(
+            "paths.%s is %s, and this machine has no mapping for %s - add one "
+            "under \"volumes\" in the settings file, for example "
+            "{\"%s\": \"/Volumes/YourDisk\"}"
+            % (key, value, missing, missing)
+        )
+
+    return Path(volumes.localise(value))
 
 
 def _fill(template, context, config, **extra):

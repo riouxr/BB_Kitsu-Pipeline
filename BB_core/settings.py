@@ -21,6 +21,12 @@ FILE = FOLDER / "settings.json"
 ENV_VAR = "BB_PIPELINE_SETTINGS"
 
 DEFAULTS = {
+    # Where this machine mounts the disks a project root can name. Kitsu
+    # holds one root for the studio; a Mac reading a brief written on
+    # Windows needs to be told that E: is /Volumes/Misery. Machine-local on
+    # purpose - it describes this computer, not the show.
+    "volumes": {},
+
     "server": "",
     "email": "",
     "work_root": "",

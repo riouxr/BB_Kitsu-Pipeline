@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.3.2.zip`.
+`dist/BB_pipeline-0.4.0.zip`.
 
 ### Develop
 
@@ -616,6 +616,51 @@ thing.
 Leniency stops there. A block that will not parse for any other reason is
 still reported rather than ignored — in the add-on preferences, and in place
 of the "Set a Work Root" message that used to hide it.
+
+### macOS, and one root for two platforms
+
+A project root is written once in Kitsu and read by every machine, so
+`work_root = "E:\Misery Loves Company"` has to mean something on a Mac too.
+It cannot on its own: `E:` is a Windows drive letter, and on macOS those
+backslashes are not separators at all — `PurePosixPath` reads the whole
+string as a single filename.
+
+So each machine is told where it mounts the disks a root can name. This lives
+in the settings file, never in Kitsu, because it describes the computer and
+not the show:
+
+```json
+"volumes": {
+  "E:": "/Volumes/Misery",
+  "I:": "/Volumes/I 4TB_Externe"
+}
+```
+
+`E:\Misery Loves Company` then resolves to `/Volumes/Misery/Misery Loves
+Company` on the Mac and stays put on Windows. The table is read in both
+directions, so a brief written on a Mac works on Windows as well.
+
+A drive with no entry is **left exactly as written** rather than having its
+letter dropped. `Z:\Show` becoming `/Show` would be a real-looking root that
+is not the one anybody meant, failing later and somewhere else; instead the
+error names the letter that needs a mapping.
+
+Passwords go to the **Keychain** through `/usr/bin/security`, the same
+generic-password item `keyring` uses, so a password saved by the add-on is
+visible to the standalone tools and the other way round. Blender ships no
+`keyring` and an extension cannot bring wheels, which is why this shells out
+rather than importing.
+
+To link a checkout into Blender on macOS or Linux:
+
+```bash
+tools/dev_install.sh
+```
+
+A symlink, where Windows uses a junction. Note the link is created under
+`~/Library/Application Support/Blender`, on the boot disk — an exFAT external
+drive cannot hold a symlink itself, but is perfectly fine as the target of
+one.
 
 ### Roots
 

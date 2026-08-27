@@ -12,11 +12,57 @@ writes a password to a file: the earlier Resolve tool kept one in plain text
 in ``~/.kitsu_resolve.json``, and that is the mistake this exists to avoid.
 """
 
+import os
 import sys
 
 SERVICE = "BBPipeline"
 
 _WINDOWS = sys.platform == "win32"
+
+_MACOS = sys.platform == "darwin"
+
+# macOS ships the `security` command, so the Keychain is reachable without a
+# dependency - which matters because Blender bundles no `keyring` and an
+# extension cannot bring wheels. Same generic-password item keyring's own
+# macOS backend writes, so a password saved here is visible to the standalone
+# PySide6 tools and the other way round.
+_SECURITY = "/usr/bin/security"
+
+
+def _keychain(args, password=None):
+    """Run `security` and return (ok, stdout). Never raises."""
+    import subprocess
+
+    try:
+        done = subprocess.run([_SECURITY] + args, capture_output=True,
+                              text=True, timeout=20)
+    except Exception:
+        return False, ""
+    return done.returncode == 0, done.stdout
+
+
+def _keychain_get(service, username):
+    ok, out = _keychain(["find-generic-password", "-s", service,
+                         "-a", username, "-w"])
+    if not ok:
+        return None
+    # -w prints the password alone, with the trailing newline the shell adds.
+    return out.rstrip("\n") or None
+
+
+def _keychain_set(service, username, password):
+    # -U updates in place rather than stacking a second item with the same
+    # service and account, which is what makes a changed password stick.
+    ok, _out = _keychain(["add-generic-password", "-s", service,
+                          "-a", username, "-w", password, "-U"])
+    return ok
+
+
+def _keychain_delete(service, username):
+    ok, _out = _keychain(["delete-generic-password", "-s", service,
+                          "-a", username])
+    return ok
+
 
 if _WINDOWS:
     import ctypes
@@ -66,6 +112,8 @@ def available():
     """True when there is somewhere safe to put a password."""
     if _WINDOWS:
         return True
+    if _MACOS and os.path.exists(_SECURITY):
+        return True
     try:
         import keyring  # noqa: F401
         return True
@@ -77,6 +125,9 @@ def get_password(username, service=SERVICE):
     """The stored password, or None if nothing is stored for this user."""
     if not username:
         return None
+
+    if _MACOS:
+        return _keychain_get(service, username)
 
     if not _WINDOWS:
         try:
@@ -105,6 +156,9 @@ def set_password(username, password, service=SERVICE):
     """Store a password. Returns True when it actually landed somewhere."""
     if not username or password is None:
         return False
+
+    if _MACOS:
+        return _keychain_set(service, username, password)
 
     if not _WINDOWS:
         try:
@@ -137,6 +191,9 @@ def delete_password(username, service=SERVICE):
     """Forget a stored password; True if one was there to forget."""
     if not username:
         return False
+
+    if _MACOS:
+        return _keychain_delete(service, username)
 
     if not _WINDOWS:
         try:
