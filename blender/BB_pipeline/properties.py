@@ -279,6 +279,18 @@ class BB_BrowserProperties(PropertyGroup):
         default='',
     )
 
+    review_as: EnumProperty(
+        name='Send',
+        description='What to publish for a render of more than one frame',
+        items=[
+            ('AUTO', 'Auto', 'A movie for a sequence, an image for one frame'),
+            ('MOVIE', 'Movie', 'An MP4 of the whole rendered range'),
+            ('STILL', 'Image', 'One frame only - the current one if it was '
+                               'rendered, otherwise the first'),
+        ],
+        default='AUTO',
+    )
+
     task_status: EnumProperty(
         name='Status',
         description='Task status to set, or leave it as it is',

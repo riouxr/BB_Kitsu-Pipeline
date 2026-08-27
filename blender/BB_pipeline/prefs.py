@@ -234,6 +234,13 @@ class BBPipelinePreferences(AddonPreferences):
     volume_list: CollectionProperty(type=BB_VolumeMapping)
     volume_index: IntProperty(default=0)
 
+    version_up_on_publish: BoolProperty(
+        name='Version Up on Publish',
+        description=('Cut the next version after publishing a render, so the '
+                     'work file and the Kitsu revision stay in step'),
+        default=True,
+    )
+
     set_output_path: BoolProperty(
         name='Set Output Path',
         description=("Point the scene's own render output at the version "
@@ -324,6 +331,7 @@ class BBPipelinePreferences(AddonPreferences):
 
         column.separator()
         column.prop(self, 'set_output_path')
+        column.prop(self, 'version_up_on_publish')
         column.prop(self, 'frame_range_on_create')
         column.prop(self, 'frame_range_on_open')
 

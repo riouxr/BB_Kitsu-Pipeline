@@ -617,6 +617,57 @@ def main():
         check(preferences.bl_rna.properties["review_max_width"].default == 0,
               "and full size is what a fresh install does")
 
+        # -- a sequence can still be published as one image ------------------
+        # MP4 is for sequences. A two-frame render is a sequence by the
+        # letter of it and a look by intent, and Kitsu plays a two-frame
+        # movie as a flicker - so saying "send an image" has to be possible.
+        pair_dir = Path(tempfile.mkdtemp(prefix="bb_pair_"))
+        pair_stem = "pairtest"
+        for frame in (1001, 1002):
+            image = bpy.data.images.new("pair%d" % frame, 32, 18,
+                                        float_buffer=True)
+            image.filepath_raw = str(pair_dir / ("%s.%04d.exr" % (pair_stem, frame)))
+            image.file_format = 'OPEN_EXR'
+            image.save()
+            bpy.data.images.remove(image)
+
+        session.state.last_render = {"directory": str(pair_dir),
+                                     "stem": pair_stem, "kind": "ANIMATION"}
+        props_review = properties.get()
+
+        check(len(review.frames_on_disk(session.state.last_render)) == 2,
+              "two frames are on disk to choose between")
+
+        props_review.review_as = "AUTO"
+        made, _temp, problem = review.prepare(bpy.context,
+                                              session.state.last_render)
+        check(made is not None and str(made).lower().endswith(".mp4"),
+              "left alone, a sequence goes as a movie (%s)" % problem or made)
+
+        bpy.context.scene.frame_current = 1002
+        props_review.review_as = "STILL"
+        made, _temp, problem = review.prepare(bpy.context,
+                                              session.state.last_render)
+        check(made is not None and not str(made).lower().endswith(".mp4"),
+              "asked for an image, it sends one (%s)" % (problem or made))
+        # Which frame was chosen is asked of the chooser: the conversion
+        # writes a temporary PNG with a generated name, so the frame number
+        # is gone from the path by the time prepare hands it back.
+        on_disk = review.frames_on_disk(session.state.last_render)
+        picked = review._frame_in_hand(bpy.context, on_disk)
+        check("1002" in os.path.basename(picked),
+              "the frame on the playhead, not just the first (%s)"
+              % os.path.basename(picked))
+
+        bpy.context.scene.frame_current = 1
+        picked = review._frame_in_hand(bpy.context, on_disk)
+        check("1001" in os.path.basename(picked),
+              "and the first frame when the playhead is off the render (%s)"
+              % os.path.basename(picked))
+
+        props_review.review_as = "AUTO"
+        shutil.rmtree(pair_dir, ignore_errors=True)
+
         # -- the still format is a choice -------------------------------------------
         real = still_dir / ("%s.1002.exr" % stem)
         source = bpy.data.images.new("src", 64, 36, float_buffer=True)

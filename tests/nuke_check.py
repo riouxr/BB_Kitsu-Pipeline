@@ -401,6 +401,7 @@ def main():
     # A Kitsu Write left aimed at the previous version is worse than one
     # never set: the frames land somewhere plausible and wrong, and the first
     # anybody knows is a comp reading a render from an older script.
+    from BB_pipeline_nuke import review as nuke_review
     from BB_pipeline_nuke import writenode as _writenode
 
     aimed = _writenode.create()
@@ -415,6 +416,26 @@ def main():
     check("v002" not in after, "and off the version before it")
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
+
+    # Publishing closes the version it came from, so three renders published
+    # from one saved script cannot all land against the same version with
+    # nothing on disk telling them apart.
+    before_publish = stamp.read().version
+    moved = nuke_review._version_up_after_publish()
+    check(stamp.read().version == before_publish + 1,
+          "publishing cuts the next version (%s -> %s)"
+          % (before_publish, stamp.read().version))
+    check("v%03d" % (before_publish + 1) in moved,
+          "and says which one it is now (%s)" % moved)
+
+    settings.save({"version_up_on_publish": False})
+    try:
+        held = stamp.read().version
+        nuke_review._version_up_after_publish()
+        check(stamp.read().version == held,
+              "and leaves it alone when the setting says so")
+    finally:
+        settings.save({"version_up_on_publish": True})
 
 
     # -- publishing is gated the same way as Blender's -----------------------

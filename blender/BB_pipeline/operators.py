@@ -664,6 +664,11 @@ class BB_OT_save_next_version(Operator):
     bl_description = 'Save the open scene as the next version of itself'
     bl_options = {'REGISTER'}
 
+    # Off when the version is being cut by a publish that has just posted its
+    # own comment: asking to publish again is how one piece of work ends up
+    # as two revisions in Kitsu.
+    announce: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+
     @classmethod
     def poll(cls, context):
         return bool(bpy.data.filepath)
@@ -712,7 +717,8 @@ class BB_OT_save_next_version(Operator):
         else:
             self.report({'INFO'}, 'Saved %s%s'
                         % (path.name, ' - %s' % moved if moved else ''))
-        _ask_to_publish(context, path)
+        if self.announce:
+            _ask_to_publish(context, path)
         return {'FINISHED'}
 
 

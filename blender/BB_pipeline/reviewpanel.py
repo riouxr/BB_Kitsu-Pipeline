@@ -64,6 +64,15 @@ class BB_PT_review(Panel):
         column = layout.column()
         column.use_property_split = False
         column.prop(props, 'comment')
+
+        # Only when there is a choice to make. One frame is an image either
+        # way, and offering to turn it into a movie would be offering a
+        # worse result.
+        if _rendered_frames(context) > 1:
+            row = column.row()
+            row.use_property_split = False
+            row.prop(props, 'review_as', expand=True)
+
         column.prop(props, 'task_status')
 
         row = layout.row()
@@ -81,6 +90,16 @@ class BB_PT_review(Panel):
             note.alert = state.is_error
             note.label(text=state.message,
                        icon='ERROR' if state.is_error else 'INFO')
+
+
+def _rendered_frames(context):
+    """How many frames the last render produced, or 0."""
+    from . import review
+
+    try:
+        return len(review.frames_on_disk(session.state.last_render))
+    except Exception:
+        return 0
 
 
 classes = (BB_PT_review,)

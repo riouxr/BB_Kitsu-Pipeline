@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.6.1.zip`.
+`dist/BB_pipeline-0.7.0.zip`.
 
 ### Develop
 
@@ -313,6 +313,31 @@ wrong, and the first anybody knows is a comp reading an older render. Nuke
 does the same to every Kitsu Write in the script.
 
 Turn it off with **Set Output Path** in the preferences.
+
+### One revision per version
+
+Publishing a render **cuts the next version**, in Blender and in Nuke, so the
+work file and the Kitsu revision stay in step. Without it, three renders
+published from one saved version put three revisions against it and nothing
+on disk tells them apart.
+
+The version that publishing cuts does not post a comment of its own — the
+publish has just posted one, and asking again is how a single piece of work
+becomes two revisions in the review history.
+
+Turn it off with **Version Up on Publish** in the preferences, or
+`version_up_on_publish` in the settings file for Nuke.
+
+### Movie or image
+
+A render of one frame goes to Kitsu as an image, a sequence as an MP4. When a
+render has more than one frame the review panel offers the choice — **Auto**,
+**Movie** or **Image** — because a two-frame render is a sequence by the
+letter of it and a look by intent, and Kitsu plays a two-frame movie as a
+flicker.
+
+**Image** sends the frame the playhead is on when that frame was rendered,
+and the first one otherwise.
 
 ### Rendering and review
 

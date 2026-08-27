@@ -147,10 +147,38 @@ def submit(node, comment='', task_status_id=None):
         return problem
 
     try:
-        return publish.send(entity_context, path, comment=comment,
+        note = publish.send(entity_context, path, comment=comment,
                             task_status_id=task_status_id, preview=movie)
     finally:
         _discard(movie)
+
+    return note + _version_up_after_publish()
+
+
+def _version_up_after_publish():
+    '''Cut the next script version once a render has been published.
+
+    So the script and the Kitsu revision stay in step: publishing three
+    renders from one saved version puts three revisions against it and
+    nothing on disk tells them apart. Publishing closes a version instead,
+    the same as the Blender side.
+    '''
+    nuke = _nuke()
+
+    if not settings.get('version_up_on_publish', True):
+        return ''
+
+    from . import scripts
+
+    try:
+        made = scripts.save_next_version()
+    except Exception as error:
+        nuke.tprint('BB Kitsu Pipeline: could not version up after publish (%s)'
+                    % error)
+        return ''
+
+    import os as _os
+    return ' - now on %s' % _os.path.basename(made) if made else ''
 
 
 def _discard(path):

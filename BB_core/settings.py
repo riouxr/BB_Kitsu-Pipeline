@@ -26,6 +26,10 @@ DEFAULTS = {
     # Windows needs to be told that E: is /Volumes/Misery. Machine-local on
     # purpose - it describes this computer, not the show.
     "volumes": {},
+    # Publishing a render closes the version it came from, so the work file
+    # and the Kitsu revision stay in step rather than three renders piling
+    # up against one saved version.
+    "version_up_on_publish": True,
 
     "server": "",
     "email": "",

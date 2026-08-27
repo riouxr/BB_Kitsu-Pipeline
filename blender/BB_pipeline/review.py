@@ -235,6 +235,36 @@ def convert_still(context, path):
     return output if os.path.isfile(output) and os.path.getsize(output) else None
 
 
+def _wants_still(context):
+    from . import properties
+
+    try:
+        return properties.get(context).review_as == 'STILL'
+    except Exception:
+        return False
+
+
+def _frame_in_hand(context, files):
+    """The rendered frame the playhead is on, or the first one.
+
+    A movie is the right answer for a sequence and the wrong one for a look
+    - Kitsu shows an image at full size and plays a one-or-two-frame movie
+    as a flicker, so publishing a still has to be sayable.
+    """
+    import re as _re
+
+    scene = getattr(context, 'scene', None)
+    current = getattr(scene, 'frame_current', None) if scene else None
+    if current is None:
+        return files[0]
+
+    for path in files:
+        digits = _re.findall(r'(\d+)', os.path.basename(path))
+        if digits and int(digits[-1]) == int(current):
+            return path
+    return files[0]
+
+
 def prepare(context, last_render):
     '''The file to send to Kitsu, and whether it is temporary.
 
@@ -244,6 +274,11 @@ def prepare(context, last_render):
     files = frames_on_disk(last_render)
     if not files:
         return None, False, 'nothing rendered to submit'
+
+    if _wants_still(context) and len(files) > 1:
+        # Asked for one image out of a sequence. The frame on the playhead
+        # if it was rendered, because that is the one being looked at.
+        files = [_frame_in_hand(context, files)]
 
     if len(files) == 1:
         extension = os.path.splitext(files[0])[1].lstrip(".").lower()
@@ -301,11 +336,43 @@ def submit(context, comment='', task_status_id=None):
                 pass
         if error:
             state.say('Kitsu upload failed: %s' % error, error=True)
-        else:
-            state.say('submitted %s to Kitsu' % os.path.basename(path))
+            return
+        state.say('submitted %s to Kitsu' % os.path.basename(path))
+        _version_up_after_publish(context)
 
     session.run('submitting to Kitsu', work, done, background=True)
     return 'uploading %s' % os.path.basename(path)
+
+
+def _version_up_after_publish(context):
+    """Cut the next version once a render has been published.
+
+    So the work file and the Kitsu revision stay in step: publishing three
+    renders from one saved version puts three revisions against it and
+    nothing on disk tells them apart. Publishing closes a version instead.
+
+    Quietly - the publish has just posted its own comment, and asking to
+    publish again is how one piece of work becomes two revisions.
+    """
+    import bpy
+
+    from . import prefs as _prefs
+
+    preferences = _prefs.get(context)
+    if preferences is not None and not preferences.version_up_on_publish:
+        return
+
+    def later():
+        try:
+            bpy.ops.bb.save_next_version(announce=False)
+        except Exception as error:
+            print('BB Kitsu Pipeline: could not version up after publish (%s)'
+                  % error)
+        return None
+
+    # From a timer, because this lands in a background job's callback and
+    # saving a file is not something to do from under one.
+    bpy.app.timers.register(later, first_interval=0.0)
 
 
 def summary(context=None):
