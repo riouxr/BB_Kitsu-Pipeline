@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.9.0.zip`.
+`dist/BB_pipeline-0.9.1.zip`.
 
 ### Develop
 
@@ -383,6 +383,20 @@ so the raw list is every status anybody has ever needed on any production. The
 browser offers only what the selected project uses — four rather than twenty —
 falling back to the whole list when a project names none, which is what Kitsu
 itself does.
+
+### Renders made by hand
+
+**F12** renders into Blender's Render Result buffer and writes nothing to
+disk, and nothing tells the add-on it happened — so a quick look could be
+rendered and then not published, because as far as the pipeline was concerned
+there was nothing to publish.
+
+A render the pipeline did not start is now filed where its own Render Image
+would have put it — which is where the scene's output path already points —
+and recorded, so the review panel can send it. It counts as a still, so with
+the default **Sequences Only** it does not burn a version either.
+
+Turn it off with **File Renders Made by Hand** in the preferences.
 
 ### Movie or image
 

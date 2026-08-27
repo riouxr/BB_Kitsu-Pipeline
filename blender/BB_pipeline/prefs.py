@@ -251,6 +251,14 @@ class BBPipelinePreferences(AddonPreferences):
         default='SEQUENCE',
     )
 
+    capture_manual_renders: BoolProperty(
+        name='File Renders Made by Hand',
+        description=('Save and record a render started with F12, so a quick '
+                     'look can be published. Blender otherwise leaves it in '
+                     'the Render Result buffer and writes nothing'),
+        default=True,
+    )
+
     set_output_path: BoolProperty(
         name='Set Output Path',
         description=("Point the scene's own render output at the version "
@@ -341,6 +349,7 @@ class BBPipelinePreferences(AddonPreferences):
 
         column.separator()
         column.prop(self, 'set_output_path')
+        column.prop(self, 'capture_manual_renders')
         column.prop(self, 'version_up_on_publish')
         column.prop(self, 'frame_range_on_create')
         column.prop(self, 'frame_range_on_open')

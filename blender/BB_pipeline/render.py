@@ -17,6 +17,7 @@ quietly leaves the scene writing EXRs into a temp folder would be a nasty
 thing to discover a week later.
 '''
 import os
+from pathlib import Path
 
 import bpy
 
@@ -233,12 +234,77 @@ def tidy_movie_name(last_render):
         return
 
 
-def _finished(*_args):
+def _capture_manual_render(scene, image=None):
+    """Record and save a render the pipeline did not start.
+
+    F12 renders into the Render Result buffer and writes nothing to disk, and
+    nothing tells the add-on it happened - so a quick look could be rendered
+    and then not published, because as far as the pipeline was concerned
+    there was nothing to publish.
+
+    The frame is written to the same place the pipeline's own Render Image
+    would have put it, which is where the scene's output path already points,
+    and recorded so the review panel can send it.
+
+    Returns a note, or '' when there was nothing to do. Never raises: a
+    render that has already finished must not be undone by a failure to
+    file it.
+    """
+    preferences = prefs.get()
+    if preferences is not None and not preferences.capture_manual_renders:
+        return ''
+
+    # The buffer by default; passed in only by the checks, which run in a
+    # background Blender where the real Render Result carries no pixels.
+    result = image if image is not None else bpy.data.images.get('Render Result')
+    if result is None:
+        return ''
+
+    try:
+        entity_context, stream, directory, stem, settings = target(
+            bpy.context, IMAGE)
+    except RenderSetup:
+        # No pipeline context on this scene; an ordinary Blender render
+        # that has nothing to do with us.
+        return ''
+
+    extension = (settings.get('ext') or 'exr').lower()
+    frame = scene.frame_current if scene else bpy.context.scene.frame_current
+    path = Path(directory) / ('%s.%04d.%s' % (stem, frame, extension))
+
+    try:
+        os.makedirs(str(directory), exist_ok=True)
+        result.save_render(filepath=str(path), scene=scene)
+    except Exception as error:
+        print('BB Kitsu Pipeline: could not file the render (%s)' % error)
+        return ''
+
+    session.state.last_render = {
+        'kind': IMAGE,
+        'stream': stream,
+        'directory': str(directory),
+        'stem': stem,
+        'context': entity_context,
+        'frame_start': frame,
+        'frame_end': frame,
+        'frame': frame,
+        'movie': False,
+    }
+    return str(path)
+
+
+def _finished(*args):
     tidy_movie_name(session.state.last_render)
 
     pending = session.state.render_restore
     session.state.render_restore = None
     if not pending:
+        # Nothing to restore means the pipeline did not start this render -
+        # somebody pressed F12. That is still a render worth publishing.
+        scene = args[0] if args else None
+        filed = _capture_manual_render(scene)
+        if filed:
+            session.state.say('rendered %s' % os.path.basename(filed))
         return
     scene, saved = pending
     try:

@@ -623,6 +623,58 @@ def main():
         check(preferences.bl_rna.properties["review_max_width"].default == 0,
               "and full size is what a fresh install does")
 
+        # -- a render made by hand is still publishable ----------------------
+        # F12 renders into the Render Result buffer, writes nothing to disk,
+        # and tells the add-on nothing - so a quick look could be rendered
+        # and then not published, because as far as the pipeline was
+        # concerned there was nothing to publish.
+        session.state.last_render = None
+        session.state.render_restore = None
+
+        # The scene has to carry a context, the way one opened from the
+        # browser does - that is what says where the frame belongs.
+        with properties.suspend_updates():
+            props_hand = properties.get()
+            props_hand.entity_type = "SHOT"
+            props_hand.sequence = SEQUENCE["id"]
+            props_hand.shot = SHOT["id"]
+            props_hand.task = TASK["id"]
+        hand_context = fetch.current_context(bpy.context)
+        stamp.write(bpy.context.scene, hand_context.at_version(2))
+
+        # A stand-in with actual pixels. Blender never renders in background
+        # mode, so the real Render Result datablock exists but carries no
+        # image data and cannot be saved - which is a limit of the harness,
+        # not of the add-on.
+        made_up = bpy.data.images.new("pretend render", 32, 18)
+        made_up.generated_color = (0.2, 0.4, 0.6, 1.0)
+        try:
+            bpy.context.scene.frame_current = 7
+            filed = render._capture_manual_render(bpy.context.scene, made_up)
+            check(bool(filed), "a hand-made render is filed (%s)" % filed)
+            check(filed and Path(filed).is_file(),
+                  "and actually written to disk")
+            check(filed and ".0007." in Path(filed).name,
+                  "under the frame it was rendered on (%s)"
+                  % (Path(filed).name if filed else ""))
+            check(session.state.last_render is not None,
+                  "and recorded, so the review panel can send it")
+            if session.state.last_render:
+                check(session.state.last_render.get("kind") == render.IMAGE,
+                      "as a still, not a sequence")
+                found = review.frames_on_disk(session.state.last_render)
+                check(len(found) == 1,
+                      "and prepare finds exactly the one frame (%d)" % len(found))
+
+            # Off by preference, nothing is filed.
+            preferences.capture_manual_renders = False
+            session.state.last_render = None
+            check(not render._capture_manual_render(bpy.context.scene, made_up),
+                  "and nothing is filed when the preference says not to")
+            preferences.capture_manual_renders = True
+        finally:
+            bpy.data.images.remove(made_up)
+
         # -- a sequence can still be published as one image ------------------
         # MP4 is for sequences. A two-frame render is a sequence by the
         # letter of it and a look by intent, and Kitsu plays a two-frame
