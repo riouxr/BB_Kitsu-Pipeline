@@ -504,11 +504,15 @@ def main():
         entity, stream, directory, stem, settings = render.target(
             bpy.context, render.ANIMATION)
         check(stream == "main", "an animation goes to the main stream")
-        check(stem == "VIL_FF9_0070_precomp3d_v003",
-              "the render is named off the scene version (%s)" % stem)
-        check("internalRender" in Path(directory).parts
-              and Path(directory).name == stem,
-              "renders land in a per-version stream folder (%s)" % directory)
+        # The folders above already say the project, entity and task, so the
+        # file only names the thing and its version.
+        check(stem == "0070_v003",
+              "the render is named off the entity and version (%s)" % stem)
+        check(Path(directory).name == "v003"
+              and "Render" in Path(directory).parts,
+              "renders land in a per-version folder (%s)" % directory)
+        check("main" not in Path(directory).parts,
+              "with no folder for the main stream (%s)" % directory)
         check(settings.get("ext") == "exr", "the main stream is EXR")
 
         _, blast_stream, blast_dir, _, blast_settings = render.target(
@@ -777,6 +781,11 @@ def main():
             props_now.task = TASK["id"]
 
         shot_context = fetch.current_context(bpy.context)
+
+        # Start from somewhere else, the way a scene opened from the startup
+        # file or from another shot does. An earlier section has already been
+        # through the create flow, which sets this correctly.
+        bpy.context.scene.render.filepath = "/tmp/"
         note = bb_scenesync.set_output(bpy.context, shot_context)
         wanted = bb_scenesync.output_path(shot_context, bpy.context)
         scene_path = bpy.context.scene.render.filepath

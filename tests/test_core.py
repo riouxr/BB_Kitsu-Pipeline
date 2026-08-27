@@ -156,11 +156,13 @@ class TestPaths(unittest.TestCase):
         main = self.parts(workfiles.render_file(context, "main", config=self.config))
         offline = self.parts(workfiles.render_file(context, "offline", config=self.config))
 
+        # Nothing in here repeats what the folders above already say, and
+        # `main` has no folder of its own - a directory called main next to
+        # nothing else says nothing.
         self.assertEqual(
             main,
-            "Y:/render/FF9/0070/precomp3d/internalRender/main/"
-            "VIL_FF9_0070_precomp3d_v003/VIL_FF9_0070_precomp3d_v003.####.exr")
-        # Same context, same version folder name, different stream and format.
+            "Y:/render/FF9/0070/precomp3d/Render/v003/0070_v003.####.exr")
+        # Same context, same version folder, different stream and format.
         self.assertIn("/offline/", offline)
         self.assertTrue(offline.endswith(".mov"))
         self.assertIn("v003", offline)
@@ -317,8 +319,11 @@ class TestAssets(unittest.TestCase):
 
     def test_asset_renders_get_the_same_stream_layout(self):
         path = workfiles.render_file(sample_asset(2), "main", config=self.config)
-        self.assertIn("/assets/Prop/knife/Modeling/internalRender/main/",
+        self.assertIn("/assets/Prop/knife/Modeling/Render/v002/",
                       Path(path).as_posix())
+        self.assertTrue(Path(path).name.startswith("knife_v002."),
+                        "the file names the asset, not the whole context: %s"
+                        % Path(path).name)
 
 
 class TestSchemaMigration(unittest.TestCase):
@@ -774,6 +779,109 @@ class TestExplain(unittest.TestCase):
     def test_anything_else_passes_through(self):
         from BB_core.kitsu import KitsuError
         self.assertIn("HTTP 500", self.message(KitsuError("data/x failed: HTTP 500")))
+
+
+class TestRenderLayoutSaysEachThingOnce(unittest.TestCase):
+    """Nothing in a render path repeats what the path already said.
+
+    The first layout spelled the whole context into the version folder and
+    again into the filename, under an `internalRender/main` nobody had asked
+    for, giving paths like
+
+        .../assets/Prop/Kitchen-counter/Modeling/internalRender/main/
+        Misery-Loves-Company_Prop_Kitchen-counter_Modeling_v002/
+        Misery-Loves-Company_Prop_Kitchen-counter_Modeling_v002.0001.exr
+
+    where the project is named three times and the asset twice.
+    """
+
+    def setUp(self):
+        self.config = Config()
+        self.config.paths["render_root"] = "E:/Misery"
+        self.asset = EntityContext(
+            project="Misery Loves Company", group="Prop",
+            entity="Kitchen-counter", task="Modeling",
+            entity_type="asset", version=2)
+        self.shot = EntityContext(
+            project="Misery Loves Company", group="sc01", entity="sh03",
+            task="Lighting", entity_type="shot", version=12)
+
+    def posix(self, path):
+        return Path(path).as_posix()
+
+    def test_the_project_is_not_named_below_its_own_root(self):
+        path = self.posix(workfiles.render_file(self.asset, "main",
+                                                config=self.config))
+        below = path.split("E:/Misery/", 1)[1]
+        self.assertNotIn("Misery", below, path)
+
+    def test_the_entity_is_named_once_in_the_file_and_not_in_the_folder(self):
+        path = Path(workfiles.render_file(self.asset, "main", config=self.config))
+        self.assertEqual(path.name, "Kitchen-counter_v002.####.exr")
+        self.assertEqual(path.parent.name, "v002")
+
+    def test_the_task_is_a_folder_not_part_of_the_name(self):
+        # Dropped from the filename, kept as a folder: a prop can be rendered
+        # from modelling and from lighting, and those must not collide.
+        path = Path(workfiles.render_file(self.asset, "main", config=self.config))
+        self.assertIn("Modeling", path.parts)
+        self.assertNotIn("Modeling", path.name)
+
+    def test_main_has_no_folder_of_its_own(self):
+        path = self.posix(workfiles.render_dir(self.shot, "main", self.config))
+        self.assertNotIn("/main", path)
+        self.assertTrue(path.endswith("/Render/v012"), path)
+
+    def test_another_stream_still_gets_one(self):
+        path = self.posix(workfiles.render_dir(self.shot, "proxy", self.config))
+        self.assertTrue(path.endswith("/Render/proxy/v012"), path)
+
+    def test_the_output_prefix_matches_what_is_rendered(self):
+        prefix = str(workfiles.render_output(self.shot, "main", self.config))
+        rendered = str(workfiles.render_file(self.shot, "main", "0001",
+                                             self.config))
+        self.assertTrue(rendered.startswith(prefix),
+                        "%s does not start with %s" % (rendered, prefix))
+
+
+class TestRenderVersionsReadsBothLayouts(unittest.TestCase):
+    """Renders made before the layout changed still have to be listed."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.config = Config()
+        self.config.paths["render_root"] = self._tmp.name
+        self.context = EntityContext(
+            project="PizzaHunt", group="sc01", entity="sh01", task="Lighting",
+            entity_type="shot", version=1)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def stream_folder(self):
+        return workfiles.render_dir(self.context.at_version(1), "main",
+                                    self.config).parent
+
+    def test_the_current_layout_is_read(self):
+        folder = self.stream_folder() / "v004"
+        folder.mkdir(parents=True)
+        (folder / "sh01_v004.1001.exr").write_text("")
+        found = workfiles.render_versions(self.context, "main", self.config)
+        self.assertEqual([row[0] for row in found], [4])
+
+    def test_the_older_spelled_out_layout_is_still_read(self):
+        folder = self.stream_folder() / "PizzaHunt_sc01_sh01_Lighting_v002"
+        folder.mkdir(parents=True)
+        (folder / "PizzaHunt_sc01_sh01_Lighting_v002.1001.exr").write_text("")
+        found = workfiles.render_versions(self.context, "main", self.config)
+        self.assertEqual([row[0] for row in found], [2])
+
+    def test_a_folder_that_names_neither_is_ignored(self):
+        folder = self.stream_folder() / "scratch"
+        folder.mkdir(parents=True)
+        (folder / "whatever.1001.exr").write_text("")
+        self.assertEqual(workfiles.render_versions(self.context, "main",
+                                                   self.config), [])
 
 
 class TestVersionThumbnails(unittest.TestCase):

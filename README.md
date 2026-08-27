@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.5.0.zip`.
+`dist/BB_pipeline-0.6.0.zip`.
 
 ### Develop
 
@@ -285,9 +285,15 @@ expects rather than into the startup file's `/tmp` or the last shot you had
 open:
 
 ```
-<render_root>/sc01/sh03/Lighting/internalRender/main/<version>/<version>.
-<render_root>/assets/Prop/knife/Modeling/internalRender/main/<version>/<version>.
+<render_root>/sc01/sh03/Lighting/Render/v012/sh03_v012.
+<render_root>/assets/Prop/Kitchen-counter/Modeling/Render/v002/Kitchen-counter_v002.
 ```
+
+Nothing there repeats what the path already says. The project is the root, the
+entity and the task are folders, so the file names only the thing and its
+version — enough to stay identifiable if it is copied out on its own, and no
+more. The task stays a folder because a prop can be rendered from modelling
+and from lighting, and those must not collide.
 
 A shot goes under its sequence and shot, an asset under `assets/` and its
 type and name. The trailing dot is deliberate: Blender appends the frame and

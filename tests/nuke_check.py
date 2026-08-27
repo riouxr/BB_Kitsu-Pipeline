@@ -556,8 +556,8 @@ def main():
     written = node.knob("file").value()
     check(written.endswith(".exr") and "%04d" in written,
           "its path is a frame pattern (%s)" % os.path.basename(written))
-    check("internalRender" in written and "_v004" in written,
-          "under the version it belongs to")
+    check("/Render/" in written.replace(chr(92), "/") and "v004" in written,
+          "under the version it belongs to (%s)" % written)
     check(written == written.replace(chr(92), "/"),
           "with forward slashes, which is what Nuke wants")
 

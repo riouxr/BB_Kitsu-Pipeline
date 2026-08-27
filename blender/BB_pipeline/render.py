@@ -99,7 +99,8 @@ def target(context, kind):
         raise RenderSetup(str(error))
 
     settings = config.streams.get(stream, {})
-    return entity_context, stream, directory, entity_context.versioned(config=config), settings
+    return (entity_context, stream, directory,
+            workfiles.render_stem(entity_context, config), settings)
 
 
 def _apply_output(scene, kind, directory, stem, settings):

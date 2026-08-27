@@ -37,9 +37,14 @@ work_file = "{versioned}.{ext}"
 
 # Renders get a version *folder*, one level under a per-stream folder, so a
 # single version can emit several parallel outputs.
-render_dir_shot = "{group}/{entity}/{task}/internalRender/{stream}/{versioned}"
-render_dir_asset = "assets/{group}/{entity}/{task}/internalRender/{stream}/{versioned}"
-render_file = "{versioned}.{frame}.{ext}"
+# Nothing here repeats what the folders above it already say. The project is
+# the root, the entity and task are folders, so the file only has to name the
+# thing and its version - enough to still be identifiable if it is copied out
+# on its own, and no more.
+render_dir_shot = "{group}/{entity}/{task}/Render/{stream}/v{version}"
+render_dir_asset = "assets/{group}/{entity}/{task}/Render/{stream}/v{version}"
+render_stem = "{entity}_v{version}"
+render_file = "{stem}.{frame}.{ext}"
 
 # Per-project overrides, for shows that do not live under the common root.
 # Anything valid under [paths] can be overridden here, matched against the
@@ -67,8 +72,13 @@ departments = ["Compositing", "2D"]
 
 # Parallel outputs derivable from one render context. Only `main` is wired up
 # yet; the rest are here so the shape is settled before the render side lands.
+# The stream is which parallel output this is - the full-quality render, a
+# proxy, an offline with burn-ins, a matte pass. Only `main` is wired up so
+# far, and it deliberately has no folder of its own: a directory called
+# `main` next to nothing else says nothing. Give a stream a folder and it
+# appears in the path; leave it empty and it does not.
 [streams.main]
-folder = "main"
+folder = ""
 ext = "exr"
 colorspace = "ACES - ACEScg"
 

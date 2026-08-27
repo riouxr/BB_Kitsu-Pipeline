@@ -18,6 +18,9 @@ from .config import Config
 # the extension, which is where every render_file template puts it.
 _FRAME = re.compile(r"(\d+)(?=\.[^.]+$)")
 
+# A version folder: ``v003``, and nothing else.
+_VERSION_FOLDER = re.compile(r"^[vV](\d+)$")
+
 _TOKEN = re.compile(r"\{(\w+)\}")
 
 
@@ -59,7 +62,12 @@ def _fill(template, context, config, **extra):
               for name, value in context.as_fields().items()}
     values.update(extra)
 
-    missing = [name for name in _TOKEN.findall(template) if not values.get(name)]
+    # A value handed in explicitly may legitimately be empty - a stream with
+    # no folder of its own is the reason - so only a token with nothing behind
+    # it at all, or an empty field off the context, counts as missing.
+    missing = [name for name in _TOKEN.findall(template)
+               if name not in values
+               or (not values.get(name) and name not in extra)]
     if missing:
         raise ValueError("path template %r is missing %s" % (template, ", ".join(missing)))
 
@@ -188,9 +196,30 @@ def render_dir(context, stream="main", config=None):
                          % (stream, ", ".join(sorted(config.streams))))
 
     folder = config.streams[stream].get("folder", stream)
-    return _root(config, "render_root") / _fill(
+    filled = _fill(
         _template(config, "render_dir", context), context, config,
         stream=folder,
+        version=naming.format_version(context.version or 1, config),
+        versioned=context.versioned(config=config),
+    )
+    # A stream with no folder of its own leaves an empty segment behind -
+    # `main` deliberately has none, because a directory called `main` next to
+    # nothing else says nothing.
+    filled = "/".join(part for part in filled.replace("\\", "/").split("/") if part)
+    return _root(config, "render_root") / filled
+
+
+def render_stem(context, config=None):
+    """What a rendered file is called, before the frame and the extension.
+
+    Its own function because the scene's output path, the render operators
+    and the listing all have to agree on it, and three copies of one string
+    is how they stop agreeing.
+    """
+    config = (config or Config()).for_project(context.project)
+    return _fill(
+        config.paths["render_stem"], context, config,
+        version=naming.format_version(context.version or 1, config),
         versioned=context.versioned(config=config),
     )
 
@@ -208,8 +237,7 @@ def render_output(context, stream="main", config=None):
     two that have to be kept in step.
     """
     config = (config or Config()).for_project(context.project)
-    stem = context.versioned(config=config)
-    return render_dir(context, stream, config) / (stem + ".")
+    return render_dir(context, stream, config) / (render_stem(context, config) + ".")
 
 
 def render_versions(context, stream="main", config=None):
@@ -246,14 +274,7 @@ def render_versions(context, stream="main", config=None):
     for entry in sorted(folder.iterdir()):
         if not entry.is_dir():
             continue
-        # Same rule as existing_versions: the folder has to name this shot
-        # and this task, so a stray folder cannot invent a version.
-        parsed = naming.parse(entry.name, config)
-        if not parsed:
-            continue
-        if naming.format_base(parsed, config).lower() != wanted.lower():
-            continue
-        version = parsed["version"]
+        version = _version_folder(entry.name, wanted, config)
         if version is None:
             continue
         frames = sorted(entry.glob("*.%s" % ext))
@@ -264,6 +285,27 @@ def render_versions(context, stream="main", config=None):
             found.append((version, pattern, first, last))
 
     return sorted(found)
+
+
+def _version_folder(name, wanted, config):
+    """The version a render folder holds, or None if it holds none.
+
+    Two shapes are accepted. The current one is just ``v003``: the folders
+    above it already say which project, entity and task this is, so the
+    version folder repeating all of it was noise. The older one spelled the
+    whole name out, and is still read so renders made before the layout
+    changed keep showing up in the browser.
+    """
+    match = _VERSION_FOLDER.match(name)
+    if match:
+        return int(match.group(1))
+
+    parsed = naming.parse(name, config)
+    if not parsed or parsed.get("version") is None:
+        return None
+    if naming.format_base(parsed, config).lower() != wanted.lower():
+        return None
+    return parsed["version"]
 
 
 def _frame_pattern(frames):
@@ -293,6 +335,8 @@ def render_file(context, stream="main", frame="####", config=None):
     settings = config.streams[stream]
     name = _fill(
         config.paths["render_file"], context, config,
+        stem=render_stem(context, config),
+        version=naming.format_version(context.version or 1, config),
         versioned=context.versioned(config=config),
         frame=frame,
         ext=settings.get("ext", "exr"),
