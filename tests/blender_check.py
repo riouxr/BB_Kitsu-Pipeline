@@ -12,6 +12,7 @@ Exits non-zero on the first failure, so it is usable as a build gate.
 """
 
 import base64
+import os
 import shutil
 import sys
 import tempfile
@@ -759,6 +760,41 @@ def main():
         check(not missing.is_file(), "a version never saved has no thumbnail")
         check(thumbnails.version_icon(missing) == 0,
               "which the browser reports as no icon rather than raising")
+
+        # -- leftovers from an older build --------------------------------
+        # Replacing the files does not undo an import: until 0.3.1 the core
+        # went on sys.path and was imported top-level, and those entries
+        # outlive an upgrade in place. Blender reads live state for its
+        # policy warnings, so the old build's footprints get reported
+        # against the new one until Blender restarts.
+        import types as _types
+        from BB_pipeline import core as bb_core_module
+
+        addon_dir = os.path.dirname(os.path.abspath(bb_core_module.__file__))
+        planted = _types.ModuleType("BB_core")
+        planted.__file__ = os.path.join(addon_dir, "BB_core", "__init__.py")
+        sys.modules["BB_core"] = planted
+        planted_sub = _types.ModuleType("BB_core.config")
+        planted_sub.__file__ = os.path.join(addon_dir, "BB_core", "config.py")
+        sys.modules["BB_core.config"] = planted_sub
+        sys.path.insert(0, addon_dir)
+
+        bb_core_module._forget_older_build()
+
+        check("BB_core" not in sys.modules and "BB_core.config" not in sys.modules,
+              "a previous build's top-level modules are forgotten")
+        check(addon_dir not in [os.path.abspath(entry) for entry in sys.path],
+              "and the sys.path entry it added is removed")
+
+        # A checkout's own BB_core lives outside the add-on and is shared with
+        # the Nuke package and these tests; it must survive untouched.
+        outside = _types.ModuleType("BB_core")
+        outside.__file__ = str(REPO / "BB_core" / "__init__.py")
+        sys.modules["BB_core"] = outside
+        bb_core_module._forget_older_build()
+        check(sys.modules.get("BB_core") is outside,
+              "a checkout's own core is left alone")
+        del sys.modules["BB_core"]
 
         # -- the browser tree -----------------------------------------------
         # The tree replaced three dropdowns, so what used to be guaranteed by

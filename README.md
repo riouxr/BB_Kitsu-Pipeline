@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.4.0.zip`.
+`dist/BB_pipeline-0.4.1.zip`.
 
 ### Develop
 
@@ -629,11 +629,20 @@ So each machine is told where it mounts the disks a root can name. This lives
 in the settings file, never in Kitsu, because it describes the computer and
 not the show:
 
+Set it in **Edit ▸ Preferences ▸ Add-ons ▸ BB Kitsu Pipeline ▸ Volumes**, one
+mapping per entry:
+
+```
+E: = /Volumes/Misery, I: = /Volumes/I 4TB_Externe
+```
+
+The panel appears when a root names a disk this machine has no mapping for,
+says which letter is missing, and once mapped shows what the root resolves to
+here. It is written through to the settings file, which is what the core
+reads:
+
 ```json
-"volumes": {
-  "E:": "/Volumes/Misery",
-  "I:": "/Volumes/I 4TB_Externe"
-}
+"volumes": {"E:": "/Volumes/Misery", "I:": "/Volumes/I 4TB_Externe"}
 ```
 
 `E:\Misery Loves Company` then resolves to `/Volumes/Misery/Misery Loves

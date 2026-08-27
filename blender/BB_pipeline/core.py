@@ -34,6 +34,11 @@ import sys
 # puts BB_core's real location within reach of the checkout lookup below.
 HERE = os.path.dirname(os.path.realpath(__file__))
 
+# The same folder as Blender addresses it, before the link is resolved. A
+# junction install has two names for one directory, and a module recorded
+# under either has to be recognised.
+HERE_AS_INSTALLED = os.path.dirname(os.path.abspath(__file__))
+
 # Set once the core has been located, for the panel to report against.
 error = ''
 available = False
@@ -67,9 +72,55 @@ def _bind(folder):
     return module
 
 
+def _forget_older_build():
+    """Erase what a previous version of this add-on left in the interpreter.
+
+    Until 0.3.1 the core went on ``sys.path`` and was imported as top-level
+    ``BB_core``. Replacing the files does not undo either: modules and path
+    entries live in the interpreter, not on disk, so an upgrade in place
+    leaves the old build's footprints behind and Blender reports them
+    against the new one - the policy warnings come back on an add-on that no
+    longer does anything wrong, and only a restart clears them.
+
+    Only entries pointing inside this add-on's own folder are touched, so a
+    development checkout - where ``BB_core`` is legitimately top-level and
+    lives one level up, shared with the Nuke package and the tests - is left
+    exactly as it is.
+    """
+    roots = tuple(folder + os.sep
+                  for folder in {HERE, HERE_AS_INSTALLED})
+
+    for name in [name for name in sys.modules
+                 if name == 'BB_core' or name.startswith('BB_core.')]:
+        module = sys.modules.get(name)
+        origin = getattr(module, '__file__', None) or ''
+        if not origin:
+            continue
+        origin = os.path.abspath(origin)
+        try:
+            resolved = os.path.realpath(origin)
+        except OSError:
+            resolved = origin
+        if origin.startswith(roots) or resolved.startswith(roots):
+            del sys.modules[name]
+
+    for entry in [entry for entry in sys.path if entry]:
+        here = os.path.abspath(entry)
+        try:
+            resolved = os.path.realpath(entry)
+        except OSError:
+            resolved = here
+        if (here in (HERE, HERE_AS_INSTALLED)
+                or resolved in (HERE, HERE_AS_INSTALLED)
+                or here.startswith(roots) or resolved.startswith(roots)):
+            sys.path.remove(entry)
+
+
 def bootstrap():
     '''Make ``from .BB_core import ...`` work. True when it does.'''
     global error, available
+
+    _forget_older_build()
 
     # Bundled beside this file: the shape every installed extension has.
     try:

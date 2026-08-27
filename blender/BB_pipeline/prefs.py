@@ -16,6 +16,39 @@ from bpy.types import AddonPreferences
 from . import core, session
 
 
+def parse_volumes(text):
+    """``E: = /Volumes/Misery`` lines into the table the core reads.
+
+    Accepts one mapping per line or several separated by commas, because a
+    single-line preference field is what Blender gives us and people will
+    type both.
+    """
+    table = {}
+    for chunk in str(text or "").replace(",", "\n").splitlines():
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        key, _sep, mount = chunk.partition("=")
+        key = key.strip().rstrip(":\\/")
+        mount = mount.strip()
+        if key and mount:
+            table[key.upper() + ":"] = mount
+    return table
+
+
+def format_volumes(table):
+    """The table as the preference field shows it."""
+    return ", ".join("%s = %s" % (key, mount)
+                     for key, mount in sorted((table or {}).items()))
+
+
+def _on_volumes(self, context):
+    """Push the table into the settings file, where the core reads it."""
+    from .BB_core import settings as core_settings
+
+    core_settings.save({'volumes': parse_volumes(self.volumes)})
+
+
 class BBPipelinePreferences(AddonPreferences):
     bl_idname = __package__
 
@@ -133,6 +166,16 @@ class BBPipelinePreferences(AddonPreferences):
         default=True,
     )
 
+    volumes: StringProperty(
+        name='Volumes',
+        description=('Where this machine mounts the disks a project root '
+                     'names, for example  E: = /Volumes/Misery.  A root '
+                     'written on one platform means nothing on another '
+                     'without this'),
+        default='',
+        update=_on_volumes,
+    )
+
     work_root: StringProperty(
         name='Work Root',
         description='Where scene files live. Shot folders are built under this',
@@ -221,6 +264,8 @@ class BBPipelinePreferences(AddonPreferences):
         column.prop(self, 'work_root')
         column.prop(self, 'render_root')
 
+        _draw_volumes(column, self, context)
+
         for line in kitsu_sources(context):
             note = column.row()
             note.enabled = False
@@ -232,6 +277,58 @@ class BBPipelinePreferences(AddonPreferences):
         if core.available:
             row = column.row()
             row.operator('bb.forget_password', icon='TRASH')
+
+
+def _draw_volumes(layout, preferences, context):
+    """The volume table, and what the current root resolves to through it.
+
+    Shown only when it is needed - a machine whose roots are already spelled
+    for it has nothing to map, and an empty field with a cryptic label is
+    just noise. What makes this worth a panel is that the failure it
+    prevents reads as a missing setting: a root written on Windows arrives
+    on a Mac as E:\\Show, which is not a path there at all.
+    """
+    from .BB_core import volumes as core_volumes
+
+    try:
+        roots = config(context).paths
+    except Exception:
+        roots = {}
+
+    wanted = []
+    for key in ('work_root', 'render_root'):
+        value = (roots.get(key) or '').strip()
+        missing = core_volumes.unresolved(value)
+        if missing and missing not in wanted:
+            wanted.append(missing)
+
+    if not wanted and not preferences.volumes.strip():
+        return
+
+    box = layout.box()
+    box.prop(preferences, 'volumes')
+
+    if wanted:
+        note = box.row()
+        note.alert = True
+        note.label(text='no mapping for %s on this machine' % ', '.join(wanted),
+                   icon='ERROR')
+        hint = box.row()
+        hint.enabled = False
+        hint.label(text='for example  %s = /Volumes/YourDisk' % wanted[0])
+        return
+
+    for key in ('work_root', 'render_root'):
+        value = (roots.get(key) or '').strip()
+        if not value:
+            continue
+        here = core_volumes.localise(value)
+        if here == value:
+            continue
+        line = box.row()
+        line.enabled = False
+        line.label(text='%s here: %s' % (key.replace('_', ' '), here),
+                   icon='FILE_FOLDER')
 
 
 def get(context=None):
