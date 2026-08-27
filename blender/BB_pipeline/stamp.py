@@ -62,7 +62,9 @@ def read_current():
         except Exception:
             config = None
 
-        recovered = session.ShotContext.from_filename(Path(path).name, config)
+        # From the whole path, not just the name: the name carries the
+        # entity and the version, and the folders carry the rest.
+        recovered = session.ShotContext.from_path(path, config)
         if recovered is not None:
             return recovered, 'filename'
 

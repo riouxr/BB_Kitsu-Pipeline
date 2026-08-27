@@ -12,9 +12,16 @@ allowed = "A-Za-z0-9.-"
 replacement = "-"
 version_padding = 3
 
-# The canonical studio scheme, matching the studio's Nuke output gizmo:
-#   VIL_FF9_0070_precomp3d_v003
-base = "{project}_{group}_{entity}_{task}"
+# The thing and its version, and nothing the folders above already say:
+#   Kitchen-counter_v003.blend, in .../assets/Prop/Kitchen-counter/Modeling/
+#
+# The trade-off is deliberate. A name spelling out the whole context could be
+# read back into one from the filename alone, which mattered when files were
+# passed around loose; a file that lives in the pipeline is identified by
+# where it sits and by the context stamped inside it, and the long name was
+# repeating the folders four times over. Put {project}_{group}_{entity}_{task}
+# back here for a studio that needs self-describing filenames.
+base = "{entity}"
 versioned = "{base}_v{version}"
 
 [paths]

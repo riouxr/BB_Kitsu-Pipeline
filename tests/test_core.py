@@ -43,10 +43,10 @@ def sample_asset(version=1):
 
 class TestNaming(unittest.TestCase):
     def test_studio_scheme(self):
-        self.assertEqual(sample_context().versioned(), "VIL_FF9_0070_precomp3d_v003")
+        self.assertEqual(sample_context().versioned(), "0070_v003")
 
     def test_base_has_no_version(self):
-        self.assertEqual(sample_context().base(), "VIL_FF9_0070_precomp3d")
+        self.assertEqual(sample_context().base(), "0070")
 
     def test_sanitize_keeps_underscore_free(self):
         # The separator must never appear inside a field, or parsing is
@@ -55,9 +55,31 @@ class TestNaming(unittest.TestCase):
         self.assertEqual(naming.sanitize("shot / 010 "), "shot-010")
         self.assertEqual(naming.sanitize("a???b"), "a-b")
 
+    LONG = None
+
+    @classmethod
+    def long_scheme(cls):
+        """A config spelling the whole context into the name.
+
+        Still supported and still tested: the default stopped repeating what
+        the folders say, but a studio that passes files around loose can put
+        the long template back, and it has to keep working.
+        """
+        if cls.LONG is None:
+            cls.LONG = Config()
+            cls.LONG.naming["base"] = "{project}_{group}_{entity}_{task}"
+        return cls.LONG
+
     def test_round_trip(self):
         context = sample_context(12)
         parsed = naming.parse(context.versioned())
+        self.assertEqual(parsed["entity"], "0070")
+        self.assertEqual(parsed["version"], 12)
+
+    def test_the_long_scheme_still_round_trips(self):
+        config = self.long_scheme()
+        context = sample_context(12)
+        parsed = naming.parse(context.versioned(config=config), config)
         self.assertEqual(parsed["project"], "VIL")
         self.assertEqual(parsed["group"], "FF9")
         self.assertEqual(parsed["entity"], "0070")
@@ -68,17 +90,16 @@ class TestNaming(unittest.TestCase):
         context = EntityContext(project="Villa Project", group="FF 9",
                                entity="00 70", task="precomp 3d", version=1)
         parsed = naming.parse(context.versioned())
-        self.assertEqual(parsed["group"], "FF-9")
         self.assertEqual(parsed["entity"], "00-70")
         self.assertEqual(parsed["version"], 1)
 
     def test_parse_ignores_extension_and_frame(self):
-        self.assertEqual(naming.parse("VIL_FF9_0070_comp_v004.blend")["version"], 4)
-        self.assertEqual(naming.parse("VIL_FF9_0070_comp_v004.0101.exr")["version"], 4)
+        self.assertEqual(naming.parse("0070_v004.blend")["version"], 4)
+        self.assertEqual(naming.parse("0070_v004.0101.exr")["version"], 4)
 
     def test_parse_rejects_foreign_names(self):
-        self.assertIsNone(naming.parse("old_comp_backup.blend"))
-        self.assertIsNone(naming.parse("VIL_FF9_0070_comp.blend"))
+        self.assertIsNone(naming.parse("old comp backup.blend"))
+        self.assertIsNone(naming.parse("0070.blend"))
 
     def test_padding_is_uniform(self):
         # The old tools mixed v003 and v0004 between the folder and the file;
@@ -90,8 +111,16 @@ class TestNaming(unittest.TestCase):
             config=Config().with_roots(work_root="X:/work", render_root="X:/render"))))
 
     def test_missing_field_is_an_error(self):
+        # Whatever the template asks for has to be there. The default names
+        # only the entity, so that is the one that cannot be blank.
         with self.assertRaises(ValueError):
-            EntityContext(project="VIL", group="FF9", entity="0070").base()
+            EntityContext(project="VIL", group="FF9", task="comp").base()
+
+    def test_the_long_scheme_still_demands_every_field(self):
+        config = self.long_scheme()
+        with self.assertRaises(ValueError):
+            EntityContext(project="VIL", group="FF9",
+                          entity="0070").base(config=config)
 
 
 class TestVersioning(unittest.TestCase):
@@ -111,31 +140,31 @@ class TestVersioning(unittest.TestCase):
 
     def test_next_is_one_past_highest(self):
         for version in (1, 2, 3):
-            self.touch("VIL_FF9_0070_precomp3d_v%03d.blend" % version)
+            self.touch("0070_v%03d.blend" % version)
         self.assertEqual(versioning.next_version(self.root, self.fields, "blend"), 4)
 
     def test_gap_does_not_reissue_a_version(self):
         # v002 deleted: the next file must still be v004, not v003 again.
-        self.touch("VIL_FF9_0070_precomp3d_v001.blend")
-        self.touch("VIL_FF9_0070_precomp3d_v003.blend")
+        self.touch("0070_v001.blend")
+        self.touch("0070_v003.blend")
         self.assertEqual(versioning.next_version(self.root, self.fields, "blend"), 4)
 
     def test_foreign_files_are_ignored(self):
-        self.touch("VIL_FF9_0070_precomp3d_v001.blend")
+        self.touch("0070_v001.blend")
         self.touch("random_backup.blend")
         self.touch("VIL_FF9_0070_lighting_v009.blend")   # different task
         self.touch("VIL_FF9_0080_precomp3d_v009.blend")  # different shot
         self.assertEqual(versioning.next_version(self.root, self.fields, "blend"), 2)
 
     def test_other_extensions_are_ignored(self):
-        self.touch("VIL_FF9_0070_precomp3d_v007.nk")
+        self.touch("0070_v007.nk")
         self.assertEqual(versioning.next_version(self.root, self.fields, "blend"), 1)
 
     def test_bump_derives_from_the_open_file(self):
-        self.touch("VIL_FF9_0070_precomp3d_v001.blend")
-        path, version = versioning.bump(self.root / "VIL_FF9_0070_precomp3d_v001.blend")
+        self.touch("0070_v001.blend")
+        path, version = versioning.bump(self.root / "0070_v001.blend")
         self.assertEqual(version, 2)
-        self.assertEqual(path.name, "VIL_FF9_0070_precomp3d_v002.blend")
+        self.assertEqual(path.name, "0070_v002.blend")
 
 
 class TestPaths(unittest.TestCase):
@@ -149,7 +178,7 @@ class TestPaths(unittest.TestCase):
         path = workfiles.work_file(sample_context(3), "blender", config=self.config)
         self.assertEqual(
             self.parts(path),
-            "X:/work/FF9/0070/precomp3d/VIL_FF9_0070_precomp3d_v003.blend")
+            "X:/work/FF9/0070/precomp3d/0070_v003.blend")
 
     def test_render_streams_share_one_version(self):
         context = sample_context(3)
@@ -188,7 +217,7 @@ class TestContext(unittest.TestCase):
         self.assertEqual(EntityContext.from_dict(data).entity, "0070")
 
     def test_from_filename_recovers_names_but_not_ids(self):
-        recovered = EntityContext.from_filename("VIL_FF9_0070_precomp3d_v008.blend")
+        recovered = EntityContext.from_filename("0070_v008.blend")
         self.assertEqual(recovered.entity, "0070")
         self.assertEqual(recovered.version, 8)
         self.assertEqual(recovered.task_id, "")
@@ -213,10 +242,10 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(merged.naming["version_padding"], 4)
             # Untouched keys survive.
             self.assertEqual(merged.naming["base"],
-                             "{project}_{group}_{entity}_{task}")
+                             "{entity}")
             self.assertEqual(
                 naming.format_versioned(sample_context().as_fields(), 3, merged),
-                "VIL_FF9_0070_precomp3d_v0003")
+                "0070_v0003")
 
 
 class TestPerProjectRoots(unittest.TestCase):
@@ -301,14 +330,14 @@ class TestAssets(unittest.TestCase):
                                           render_root="X:/PizzaHunt")
 
     def test_asset_names_use_the_same_scheme(self):
-        self.assertEqual(sample_asset(1).versioned(), "VIL_Prop_knife_Modeling_v001")
+        self.assertEqual(sample_asset(1).versioned(), "knife_v001")
 
     def test_assets_land_under_their_own_prefix(self):
         # A sequence called Prop must not collide with the asset type Prop.
         path = workfiles.work_file(sample_asset(1), "blender", config=self.config)
         self.assertEqual(
             Path(path).as_posix(),
-            "X:/PizzaHunt/assets/Prop/knife/Modeling/VIL_Prop_knife_Modeling_v001.blend")
+            "X:/PizzaHunt/assets/Prop/knife/Modeling/knife_v001.blend")
 
     def test_shots_and_assets_do_not_collide(self):
         clash_shot = EntityContext(entity_type="shot", project="VIL", group="Prop",
@@ -338,7 +367,7 @@ class TestSchemaMigration(unittest.TestCase):
         self.assertEqual(restored.entity, "0070")
         self.assertEqual(restored.entity_id, "sh-1")
         self.assertEqual(restored.entity_type, "shot")
-        self.assertEqual(restored.versioned(), "VIL_FF9_0070_precomp3d_v003")
+        self.assertEqual(restored.versioned(), "0070_v003")
 
 
 class TestPerDccTasks(unittest.TestCase):
@@ -469,8 +498,9 @@ KITSU_TREE = {
         "mountpoint": "", "root": "",
         "folder_path": {"shot": "<Sequence>/<Shot>/<TaskType>",
                         "asset": "assets/<AssetType>/<Asset>/<TaskType>"},
-        "file_name": {"shot": "<Project>_<Sequence>_<Shot>_<TaskType>",
-                      "asset": "<Project>_<AssetType>_<Asset>_<TaskType>"},
+        # Mirrors the local default, which is the whole point of the tests
+        # below: adopting the tree must not move a single file.
+        "file_name": {"shot": "<Shot>", "asset": "<Asset>"},
     },
 }
 
@@ -492,7 +522,7 @@ class TestKitsuFileTree(unittest.TestCase):
         self.assertEqual(filetree.translate({"file_tree": KITSU_TREE}), {
             "paths": {"work_dir_shot": "{group}/{entity}/{task}",
                       "work_dir_asset": "assets/{group}/{entity}/{task}"},
-            "naming": {"base": "{project}_{group}_{entity}_{task}"},
+            "naming": {"base": "{entity}"},
         })
 
     def test_parallel_shot_and_asset_names_collapse_to_one(self):
@@ -536,7 +566,7 @@ class TestKitsuFileTree(unittest.TestCase):
         # spells them instead, which is why this is a deliberate divergence.
         config = self.config_with(KITSU_TREE)
         self.assertEqual(sample_context(3).versioned(config=config),
-                         "VIL_FF9_0070_precomp3d_v003")
+                         "0070_v003")
 
     def test_a_token_with_no_field_is_refused_not_fudged(self):
         tree = {"working": {"folder_path": {"shot": "<Episode>/<Sequence>/<Shot>"}}}
@@ -624,7 +654,7 @@ class TestBrief(unittest.TestCase):
         path = workfiles.work_file(sample_context(1), "blender", config=config)
         self.assertEqual(
             Path(path).as_posix(),
-            "I:/PizzaHunt/FF9/0070/precomp3d/VIL_FF9_0070_precomp3d_v001.blend")
+            "I:/PizzaHunt/FF9/0070/precomp3d/0070_v001.blend")
 
     def test_the_brief_outranks_the_tree(self):
         # The brief is the more deliberate of the two, so it goes last.
@@ -1498,6 +1528,72 @@ class TestStatusesAreScopedToTheProject(unittest.TestCase):
         project = {"task_statuses": ["s3", "s1"]}
         self.assertEqual(self.names(project),
                          ["Work In Progress", "Client Approved"])
+
+
+class TestContextFromPath(unittest.TestCase):
+    """A short name plus the folders it sits in still make a context.
+
+    The filename stopped repeating the project, the group and the task, so
+    the name alone no longer rebuilds a context - the folders do. Losing
+    that would mean a file opened by hand could not be rendered.
+    """
+
+    def test_a_shot_is_recovered_whole(self):
+        found = EntityContext.from_path(
+            "X:/Show/FF9/0070/precomp3d/0070_v003.blend")
+        self.assertEqual((found.group, found.entity, found.task, found.version),
+                         ("FF9", "0070", "precomp3d", 3))
+        self.assertEqual(found.entity_type, "shot")
+
+    def test_an_asset_is_told_apart_by_its_prefix(self):
+        found = EntityContext.from_path(
+            "X:/Show/assets/Prop/knife/Modeling/knife_v001.blend")
+        self.assertEqual((found.group, found.entity, found.task, found.version),
+                         ("Prop", "knife", "Modeling", 1))
+        self.assertEqual(found.entity_type, "asset")
+
+    def test_enough_to_render_with(self):
+        found = EntityContext.from_path(
+            "X:/Show/FF9/0070/precomp3d/0070_v003.blend")
+        self.assertTrue(found.is_complete(),
+                        "a recovered context has to be usable, not merely built")
+
+    def test_a_file_somewhere_unexpected_still_gives_what_it_can(self):
+        found = EntityContext.from_path("X:/scratch/knife_v002.blend")
+        self.assertEqual(found.entity, "knife")
+        self.assertEqual(found.version, 2)
+        self.assertFalse(found.is_complete())
+
+    def test_a_name_outside_the_scheme_is_refused(self):
+        self.assertIsNone(EntityContext.from_path("X:/Show/FF9/0070/notes.txt"))
+
+    def test_the_name_wins_over_a_folder_that_disagrees(self):
+        # A file that merely happens to sit under another entity's folder is
+        # not that entity.
+        found = EntityContext.from_path(
+            "X:/Show/FF9/0070/precomp3d/somethingelse_v001.blend")
+        self.assertEqual(found.entity, "somethingelse")
+
+
+class TestIsCompleteAsksTheTemplates(unittest.TestCase):
+    """What a context needs is whatever will be built from it."""
+
+    def test_a_field_no_template_names_is_not_demanded(self):
+        # The default names a file after its entity and puts the rest in
+        # folders, so a missing project must not make a context unusable.
+        context = EntityContext(group="FF9", entity="0070", task="comp",
+                                version=1)
+        self.assertTrue(context.is_complete())
+
+    def test_a_field_the_templates_do_name_is_demanded(self):
+        self.assertFalse(EntityContext(entity="0070", version=1).is_complete())
+
+    def test_a_long_scheme_demands_the_project_again(self):
+        config = Config()
+        config.naming["base"] = "{project}_{group}_{entity}_{task}"
+        context = EntityContext(group="FF9", entity="0070", task="comp",
+                                version=1)
+        self.assertFalse(context.is_complete(config))
 
 
 if __name__ == "__main__":

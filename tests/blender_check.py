@@ -132,7 +132,7 @@ def main():
 
         shot_context = fetch.current_context()
         check(shot_context is not None, "context built from the selectors")
-        check(shot_context.versioned(1) == "VIL_FF9_0070_precomp3d_v001",
+        check(shot_context.versioned(1) == "0070_v001",
               "context names to the studio scheme (got %s)" % shot_context.versioned(1))
         check(shot_context.project == "VIL", "project code preferred over its name")
 
@@ -145,7 +145,7 @@ def main():
         check(result == {"FINISHED"}, "new_workfile succeeded (%s)" % result)
 
         expected = (work_root / "FF9" / "0070" / "precomp3d"
-                    / "VIL_FF9_0070_precomp3d_v001.blend")
+                    / "0070_v001.blend")
         check(expected.is_file(), "v001 written to the templated path")
         check(Path(bpy.data.filepath) == expected, "the new file is the one now open")
 
@@ -164,7 +164,7 @@ def main():
         result = bpy.ops.bb.save_next_version()
         check(result == {"FINISHED"}, "save_next_version succeeded (%s)" % result)
 
-        v002 = expected.parent / "VIL_FF9_0070_precomp3d_v002.blend"
+        v002 = expected.parent / "0070_v002.blend"
         check(v002.is_file(), "v002 written next to v001")
         check(Path(bpy.data.filepath) == v002, "v002 is now the open file")
         check(stamp.read_current()[0].version == 2, "the stamp followed the version")
@@ -195,7 +195,7 @@ def main():
         check(result == {"FINISHED"}, "third new_workfile succeeded")
         check(properties.get().project == "p1",
               "the selection survives creating a version from the startup file")
-        v003 = expected.parent / "VIL_FF9_0070_precomp3d_v003.blend"
+        v003 = expected.parent / "0070_v003.blend"
         check(v003.is_file(), "next version is v003, not v010")
 
         # -- reopen -------------------------------------------------------------
@@ -325,7 +325,7 @@ def main():
         asset_context = fetch.current_context()
         check(asset_context is not None, "asset context builds from the Assets tab")
         check(asset_context.entity_type == "asset", "context knows it is an asset")
-        check(asset_context.versioned(1) == "VIL_Prop_knife_precomp3d_v001",
+        check(asset_context.versioned(1) == "knife_v001",
               "asset names use the same scheme (%s)" % asset_context.versioned(1))
 
         asset_dir = session.workfiles_module.work_dir(

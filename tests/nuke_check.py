@@ -322,7 +322,7 @@ def main():
     context = fetch.current_context("p1", "s1", "sh1", "t2")
     check(context is not None, "context builds from a shot selection")
     check(context.entity_type == "shot", "and knows it is a shot")
-    check(context.versioned(1) == "PizzaHunt_sc01_sh01_Compositing_v001",
+    check(context.versioned(1) == "sh01_v001",
           "named to the studio scheme (%s)" % context.versioned(1))
     check(context.task == "Compositing", "with the compositing task")
 
@@ -374,7 +374,7 @@ def main():
     created = scripts.create_version(context)
     check(created and Path(created).is_file(),
           "create_version writes a script (%s)" % os.path.basename(created or ""))
-    check(os.path.basename(created) == "PizzaHunt_sc01_sh01_Compositing_v001.nk",
+    check(os.path.basename(created) == "sh01_v001.nk",
           "starting at v001")
     check(nuke.root().knob("first_frame").value() == 1001
           and nuke.root().knob("last_frame").value() == 1252,
@@ -387,7 +387,7 @@ def main():
     check(len(found) == 1, "the version is found on disk (%d)" % len(found))
 
     bumped = scripts.save_next_version()
-    check(os.path.basename(bumped) == "PizzaHunt_sc01_sh01_Compositing_v002.nk",
+    check(os.path.basename(bumped) == "sh01_v002.nk",
           "save_next_version increments (%s)" % os.path.basename(bumped))
     check(stamp.read().version == 2, "and the stamp follows the version")
 

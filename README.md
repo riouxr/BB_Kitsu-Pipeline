@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.8.0.zip`.
+`dist/BB_pipeline-0.9.0.zip`.
 
 ### Develop
 
@@ -345,6 +345,36 @@ rendered from one file are looks, not deliveries, and making each burn a
 version would leave the number counting glances. **Always** and **Never** are
 there for studios that want it otherwise; Nuke reads `version_up_on_publish`
 from the settings file.
+
+### Scene file names
+
+```
+<work_root>/FF9/0070/precomp3d/0070_v003.blend
+<work_root>/assets/Prop/Kitchen-counter/Modeling/Kitchen-counter_v003.blend
+```
+
+The thing and its version, and nothing the folders already say. The old scheme
+spelled the whole context into every filename, which repeated the folder path
+four times over.
+
+The trade-off is real and worth knowing: a name carrying the whole context
+could be read back into one from the filename alone. A file that lives in the
+pipeline is identified by the context stamped inside it, and failing that by
+**where it sits** — the folders say the group, the entity and the task, and
+`EntityContext.from_path` reads them against the same templates that wrote
+them. A file dragged somewhere unexpected still yields its entity and version,
+and says it is not complete.
+
+A studio that passes files around loose can put the long scheme back:
+
+```toml
+[naming]
+base = "{project}_{group}_{entity}_{task}"
+```
+
+Nothing else needs changing — what a context must carry is derived from
+whatever the templates ask for, so the long scheme demands the project again
+on its own.
 
 ### Statuses belong to the show
 

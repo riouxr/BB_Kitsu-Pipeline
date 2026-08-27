@@ -74,7 +74,9 @@ def read_current():
             config = settings.config()
         except Exception:
             config = None
-        recovered = EntityContext.from_filename(Path(name).name, config)
+        # From the whole path, not just the name: the name carries the
+        # entity and the version, and the folders carry the rest.
+        recovered = EntityContext.from_path(name, config)
         if recovered is not None:
             return recovered, 'filename'
 

@@ -7,6 +7,7 @@ version than the scene: nothing here accepts a version argument that did not
 come off the context.
 """
 
+import copy
 import os
 import re
 from pathlib import Path
@@ -301,9 +302,26 @@ def _version_folder(name, wanted, config):
         return int(match.group(1))
 
     parsed = naming.parse(name, config)
-    if not parsed or parsed.get("version") is None:
+    if parsed and parsed.get("version") is not None:
+        if naming.format_base(parsed, config).lower() == wanted.lower():
+            return parsed["version"]
         return None
-    if naming.format_base(parsed, config).lower() != wanted.lower():
+
+    # Folders written before the name stopped repeating the context. Parsed
+    # against the scheme that made them, not the one in force now, or a show
+    # that predates the change loses every render it has.
+    return _legacy_version_folder(name, config)
+
+
+# What a name looked like when it spelled the whole context out.
+_LEGACY_BASE = "{project}_{group}_{entity}_{task}"
+
+
+def _legacy_version_folder(name, config):
+    legacy = copy.deepcopy(config)
+    legacy.naming["base"] = _LEGACY_BASE
+    parsed = naming.parse(name, legacy)
+    if not parsed or parsed.get("version") is None:
         return None
     return parsed["version"]
 
