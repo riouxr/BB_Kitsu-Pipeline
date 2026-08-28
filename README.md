@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-0.9.4.zip`.
+`dist/BB_pipeline-0.9.5.zip`.
 
 ### Develop
 
@@ -750,6 +750,18 @@ Resolution order, each winning over the last: built-in defaults, local
 because it is the most deliberate and the most easily corrected. A `[bb]`
 block that is not valid TOML is **reported, not ignored** — silently dropping
 a typo in a root would write files somewhere unexpected.
+
+The block can be written the way it comes out of a paste — all on one line,
+all on separate lines, or half and half:
+
+```toml
+[bb] work_root = "E:\Orthex" render_root = "E:\Orthex"
+```
+
+TOML wants a table header and one assignment per line, and a line copied
+between projects arrives without its newlines. A block found and then
+silently discarded is worse than one never found: the tools then report a
+root that is not set on a project that plainly has one.
 
 Paths can be written the way Windows hands them to you:
 

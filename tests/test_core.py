@@ -1596,5 +1596,54 @@ class TestIsCompleteAsksTheTemplates(unittest.TestCase):
         self.assertFalse(context.is_complete(config))
 
 
+class TestABriefTypedIntoAWebForm(unittest.TestCase):
+    r"""What a brief looks like when a person types it into Kitsu.
+
+    TOML wants a table header and then one assignment per line. A web form
+    gives back whatever was typed, and a line copied from another project
+    arrives without its newlines - which used to be found and then silently
+    discarded, so the tools reported a root that was not set on a project
+    that plainly had one.
+    """
+
+    ONE_LINE = r'[bb] work_root = "E:\Orthex" render_root = "E:\Orthex"'
+
+    def paths(self, text):
+        found = brief.parse(text)
+        return (found or {}).get("paths", {})
+
+    def test_the_whole_block_on_one_line(self):
+        self.assertEqual(self.paths(self.ONE_LINE),
+                         {"work_root": r"E:\Orthex",
+                          "render_root": r"E:\Orthex"})
+
+    def test_the_marker_alone_still_works(self):
+        text = ("Notes about the show.\n\n[bb]\n"
+                'work_root = "E:/Show"\nrender_root = "E:/Renders"\n')
+        self.assertEqual(self.paths(text),
+                         {"work_root": "E:/Show", "render_root": "E:/Renders"})
+
+    def test_half_and_half(self):
+        text = '[bb] work_root = "E:/Show"\nrender_root = "E:/Renders"'
+        self.assertEqual(self.paths(text),
+                         {"work_root": "E:/Show", "render_root": "E:/Renders"})
+
+    def test_a_comment_after_a_value_is_not_a_new_key(self):
+        text = '[bb] work_root = "E:/A" # the fast drive\nrender_root = "E:/B"'
+        self.assertEqual(self.paths(text),
+                         {"work_root": "E:/A", "render_root": "E:/B"})
+
+    def test_an_equals_inside_a_value_is_left_alone(self):
+        self.assertEqual(self.paths('[bb] work_root = "E:/a=b"'),
+                         {"work_root": "E:/a=b"})
+
+    def test_prose_after_the_block_is_not_swallowed(self):
+        text = '[bb] work_root = "E:/Show"\n\n[notes]\nanything = 1'
+        self.assertEqual(self.paths(text), {"work_root": "E:/Show"})
+
+    def test_no_block_is_still_no_block(self):
+        self.assertIsNone(brief.parse("Just a description."))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

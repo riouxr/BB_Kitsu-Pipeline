@@ -71,7 +71,11 @@ def extract(description):
 
     start = None
     for index, line in enumerate(lines):
-        if line.strip().lower() == MARKER:
+        # startswith, not ==: a brief typed into a web form often carries the
+        # settings on the marker's own line, and a block that is found but
+        # discarded is worse than one that is not found at all - the tools
+        # then report a root that is not set on a project that has one.
+        if line.strip().lower().startswith(MARKER):
             start = index
             break
     if start is None:
@@ -86,7 +90,60 @@ def extract(description):
             break
         collected.append(line)
 
-    return "\n".join(collected).strip()
+    return _split_assignments("\n".join(collected).strip())
+
+
+# A bare key at the start of an assignment.
+_KEY = re.compile(r"[A-Za-z_][\w.\-]*\s*=")
+
+
+def _split_assignments(text):
+    r"""One line of ``key = "value"`` pairs turned into one pair per line.
+
+    TOML wants a line each. A brief is typed into a web form, and
+    ``[bb] work_root = "E:\Orthex" render_root = "E:\Orthex"`` is what comes
+    back - sometimes because that is how it was typed, sometimes because the
+    field did not keep the newlines. Either way the block used to be found
+    and silently discarded, and the tools then reported a root that was not
+    set on a project that plainly had one.
+
+    Quote-aware, so an ``=`` inside a value is left alone.
+    """
+    out = []
+    quote = ''
+    index = 0
+    start_of_piece = 0
+
+    while index < len(text):
+        char = text[index]
+
+        if quote:
+            if char == quote and text[index - 1:index] != '\\':
+                quote = ''
+            index += 1
+            continue
+
+        if char in '"\'':
+            quote = char
+            index += 1
+            continue
+
+        if char == '\n':
+            out.append(text[start_of_piece:index])
+            index += 1
+            start_of_piece = index
+            continue
+
+        # A bare key followed by '=' begins a new pair. Anything already at
+        # the start of its own piece is where it belongs.
+        match = _KEY.match(text, index)
+        if match and text[start_of_piece:index].strip():
+            out.append(text[start_of_piece:index])
+            start_of_piece = index
+        index = match.end() if match else index + 1
+
+    out.append(text[start_of_piece:])
+    return "\n".join(piece.strip() for piece in out if piece.strip())
 
 
 # A ``key = "value"`` line, which is the only shape a root is ever written in.
