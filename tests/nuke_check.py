@@ -94,15 +94,27 @@ def make_stub():
     stub.tprint = lambda *a: None
     stub.scriptClear = lambda: stub._root.knobs.pop("BB_pipeline", None)
 
+    # The stamp lives in the file in real Nuke, so saving keeps it and
+    # opening brings it back. Without that, clearing the script before
+    # opening - which is what makes "replace this one" actually replace -
+    # would look like it loses the context.
+    stub.stamps = {}
+
     def script_save_as(path, overwrite=0):
         stub.saved.append(path)
         stub._root._name = path
+        stub.stamps[str(path)] = stub._root.knobs.get("BB_pipeline")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text("# stub nuke script\n", encoding="utf-8")
+        Path(path).write_text("# stub nuke script", encoding="utf-8")
 
     def script_open(path):
         stub.opened.append(path)
         stub._root._name = path
+        kept = stub.stamps.get(str(path))
+        if kept is not None:
+            stub._root.knobs["BB_pipeline"] = kept
+        else:
+            stub._root.knobs.pop("BB_pipeline", None)
 
     stub.scriptSaveAs = script_save_as
     stub.scriptOpen = script_open
@@ -560,7 +572,9 @@ def main():
     kept_context = state.context
     kept_stamp = nuke._root.knobs.get("BB_pipeline")
 
-    unstamped = Path(work_root) / "sc01" / "sh01" / "Compositing" / "sh01_v001.nk"
+    # A version nothing in this run ever saved, so it genuinely carries no
+    # stamp - v001 was written by create_version further up.
+    unstamped = Path(work_root) / "sc01" / "sh01" / "Compositing" / "sh01_v097.nk"
     unstamped.parent.mkdir(parents=True, exist_ok=True)
     unstamped.write_text("# no stamp here", encoding="utf-8")
 
@@ -585,8 +599,15 @@ def main():
     # Put the session back where the rest of the checks expect it - the
     # stub records every open, and a later check counts them.
     del nuke.opened[:]
+    # Removed from disk too: the next version is read off the folder, so a
+    # v097 left lying about moves it for every check after this one.
+    unstamped.unlink()
     nuke._root._name = kept_name
     state.context = kept_context
+    # Unconditionally: there may have been no stamp to begin with, and
+    # leaving this block's one behind moved the version the later checks
+    # count from.
+    nuke._root.knobs.pop("BB_pipeline", None)
     if kept_stamp is not None:
         nuke._root.knobs["BB_pipeline"] = kept_stamp
 

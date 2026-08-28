@@ -106,6 +106,16 @@ def open_version(path, known=None):
     if not os.path.isfile(path):
         raise ScriptError('File is gone: %s' % path)
 
+    # Emptied first, and deliberately. scriptOpen on its own does not
+    # reliably replace what is already loaded - it left the old comp open
+    # and brought the new one up beside it, which is the opposite of what
+    # "replace this one" means. Clearing first makes the reuse explicit.
+    #
+    # The flag goes down before the clear so Nuke does not raise its own
+    # save prompt: whether to save has already been asked and answered.
+    forget_our_edit()
+    nuke.scriptClear()
+
     nuke.scriptOpen(path)
     state.context = stamp.read() or known
     # A freshly opened script has no unsaved changes, whatever reading it
