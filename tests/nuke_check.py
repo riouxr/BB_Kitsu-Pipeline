@@ -503,6 +503,28 @@ def main():
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
 
+    # -- the pipeline's own edits are not the artist's ------------------------
+    # Stamping, repointing Writes and applying the frame range all set
+    # nuke.modified(). Asking "save your changes?" about those is asking
+    # about work nobody did - which is what made the prompt useless.
+    nuke._root.modified = True
+    nuke.modified = lambda: nuke._root.modified
+
+    def set_modified(value):
+        nuke._root.modified = bool(value)
+
+    nuke._root.setModified = set_modified
+
+    check(scripts.is_modified(), "a modified script reports as modified")
+    scripts.forget_our_edit()
+    check(not scripts.is_modified(),
+          "and the pipeline can put the flag back after its own edit")
+
+    nuke._root.modified = True
+    scripts.save_next_version()
+    check(not scripts.is_modified(),
+          "versioning up leaves nothing unsaved, having just saved")
+
     # -- opening no longer asks about work nobody changed --------------------
     # The add-on stamps the root and repoints Writes, so nuke.modified() is
     # true after any pipeline action whether or not the artist touched

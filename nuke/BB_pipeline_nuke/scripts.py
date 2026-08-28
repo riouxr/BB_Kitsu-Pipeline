@@ -24,7 +24,29 @@ def _nuke():
 
 
 def is_modified():
+    '''True when the *artist* has unsaved changes.
+
+    Not the same as nuke.modified(). This add-on stamps the root, repoints
+    Write nodes and applies the frame range - all of which set the flag
+    without anybody having touched the comp. Asking "save your changes?"
+    about those is asking about work nobody did, so each of them clears the
+    flag again once it has finished.
+    '''
     return bool(_nuke().modified())
+
+
+def forget_our_edit():
+    '''Clear the modified flag after a change only the pipeline made.
+
+    Called where the script has just been written to disk, or where the edit
+    is bookkeeping the artist neither made nor needs to save.
+    '''
+    nuke = _nuke()
+    try:
+        nuke.root().setModified(False)
+    except Exception:
+        # Older Nukes, or a Root that has gone away with a file load.
+        pass
 
 
 def current_path():
@@ -86,6 +108,9 @@ def open_version(path, known=None):
 
     nuke.scriptOpen(path)
     state.context = stamp.read() or known
+    # A freshly opened script has no unsaved changes, whatever reading it
+    # may have touched.
+    forget_our_edit()
     return path
 
 
@@ -252,6 +277,9 @@ def save_next_version():
     state.context = stamped
     _repoint_writes()
     _store_thumb(stamped, version, config)
+    # Repointing happens after the save, so without this the freshly saved
+    # script reports unsaved changes it does not have.
+    forget_our_edit()
     return str(path)
 
 
