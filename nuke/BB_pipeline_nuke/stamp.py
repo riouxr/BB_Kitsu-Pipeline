@@ -10,6 +10,7 @@ Project Settings, and a stray edit there would quietly repoint a comp at
 another shot.
 '''
 import json
+import os
 
 KNOB = 'BB_pipeline'
 LABEL = 'Kitsu context'
@@ -69,6 +70,17 @@ def read_current():
     from BB_core.context import EntityContext
 
     name = nuke.root().name()
+
+    # What the browser opened, when the script itself says nothing. Matched
+    # on the filename so a context left over from another script cannot be
+    # borrowed by this one.
+    from . import session
+
+    remembered = session.state.context
+    borrowed = _from_session(remembered, name)
+    if borrowed is not None:
+        return borrowed, 'session'
+
     if name and name != 'Root':
         try:
             config = settings.config()
@@ -81,3 +93,37 @@ def read_current():
             return recovered, 'filename'
 
     return None, ''
+
+
+def _from_session(remembered, name):
+    """The browser's context, if the open script is the one it opened.
+
+    Matched on the folder rather than the filename: the browser's context
+    names a task, not a version, and the version is read off the file. That
+    is also what stops a context left over from another script being
+    borrowed by this one.
+    """
+    if remembered is None or not name:
+        return None
+
+    from BB_core import naming, workfiles
+
+    from . import session
+
+    try:
+        folder = workfiles.work_dir(remembered,
+                                    session.config_for(remembered))
+    except Exception:
+        return None
+
+    here = os.path.normpath(os.path.dirname(str(name))).lower()
+    if here != os.path.normpath(str(folder)).lower():
+        return None
+
+    try:
+        config = session.config_for(remembered)
+        version = naming.version_from_name(os.path.basename(str(name)), config)
+    except Exception:
+        version = None
+
+    return remembered.at_version(version) if version else remembered

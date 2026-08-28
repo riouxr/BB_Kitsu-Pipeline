@@ -486,7 +486,7 @@ class Browser(object):
             self._say('No version selected', error=True)
             return
         try:
-            opened = scripts.open_version(path)
+            opened = scripts.open_version(path, self.context())
         except scripts.ScriptError as error:
             self._say(str(error), error=True)
             return

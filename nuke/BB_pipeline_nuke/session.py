@@ -137,6 +137,23 @@ def config_for(entity_context=None, project_id=None):
     return _settings.config(_project_for(project_id) if project_id else None)
 
 
+def project_of(entity_context=None, project_id=None):
+    """The project a context resolves to - the one config_for consulted.
+
+    Public because the root messages name it. A message that does not say
+    which project it looked at cannot be told apart from one that looked at
+    the wrong project, and most projects on a server genuinely have no roots
+    set.
+    """
+    from BB_core import settings as _settings
+
+    if project_id is None and entity_context is not None:
+        project_id = entity_context.project_id
+    if not project_id:
+        project_id = _settings.get('last_project')
+    return _project_for(project_id) if project_id else None
+
+
 def _project_for(project_id):
     """The project dict for an id, fetching it if the session has not got it.
 

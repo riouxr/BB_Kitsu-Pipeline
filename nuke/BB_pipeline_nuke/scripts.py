@@ -31,8 +31,14 @@ def current_path():
     return '' if not name or name == 'Root' else name
 
 
-def open_version(path):
-    '''Open a .nk script, refusing rather than discarding unsaved work.'''
+def open_version(path, known=None):
+    '''Open a .nk script, refusing rather than discarding unsaved work.
+
+    ``known`` is the context the browser opened it from. A script written
+    before it was stamped, or by hand, carries nothing to identify it - and
+    throwing away what the browser already knew is how a file opened from
+    the browser ends up unable to say which project it is in.
+    '''
     nuke = _nuke()
 
     if not os.path.isfile(path):
@@ -44,7 +50,7 @@ def open_version(path):
             return ''
 
     nuke.scriptOpen(path)
-    state.context = stamp.read()
+    state.context = stamp.read() or known
     return path
 
 
@@ -82,9 +88,9 @@ def next_version(entity_context):
 
     config = session.config_for(entity_context)
     if not (config.paths.get('work_root') or '').strip():
-        raise ScriptError(_root_problem(entity_context) or
-                          'Set a Work Root in Kitsu > Settings..., or a '
-                          '[bb] block in the Kitsu project brief')
+        from BB_core import brief
+        raise ScriptError(brief.missing_root(
+            session.project_of(entity_context), 'work root'))
 
     return workfiles.next_workfile(entity_context, session.DCC, config)
 

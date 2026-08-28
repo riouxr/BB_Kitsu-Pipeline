@@ -464,6 +464,45 @@ def main():
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
 
+    # -- opening from the browser is enough to know the project --------------
+    # A script written before it was stamped, or by hand, carries nothing to
+    # identify it. The browser knew which project it opened from, and
+    # throwing that away is how a file opened from the browser ends up
+    # unable to say which project it is in.
+    kept_name = nuke.root().name()
+    kept_context = state.context
+    kept_stamp = nuke._root.knobs.get("BB_pipeline")
+
+    unstamped = Path(work_root) / "sc01" / "sh01" / "Compositing" / "sh01_v001.nk"
+    unstamped.parent.mkdir(parents=True, exist_ok=True)
+    unstamped.write_text("# no stamp here", encoding="utf-8")
+
+    nuke.scriptClear()
+    state.context = None
+    scripts.open_version(str(unstamped), context)
+
+    recovered, source = stamp.read_current()
+    check(recovered is not None and source == "session",
+          "the browser's context survives opening an unstamped script (%s)"
+          % source)
+    check(recovered is not None and recovered.project_id == context.project_id,
+          "and it still knows the project")
+
+    # A context left over from another script must not be borrowed.
+    nuke.scriptClear()
+    nuke._root._name = str(Path(work_root) / "elsewhere" / "other_v003.nk")
+    borrowed, source = stamp.read_current()
+    check(source != "session",
+          "but another script does not borrow it (%s)" % source)
+
+    # Put the session back where the rest of the checks expect it - the
+    # stub records every open, and a later check counts them.
+    del nuke.opened[:]
+    nuke._root._name = kept_name
+    state.context = kept_context
+    if kept_stamp is not None:
+        nuke._root.knobs["BB_pipeline"] = kept_stamp
+
     # -- a shot with no frame range still lists its tasks ---------------------
     # frames.frame_range returns None rather than a pair when a shot carries
     # no frame data, and plenty do. Unpacking it raised in the caption above

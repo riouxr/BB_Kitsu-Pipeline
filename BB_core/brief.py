@@ -274,3 +274,22 @@ def problem(project):
     except BadBrief as error:
         return "the [bb] block in the Kitsu brief will not parse: %s" % error
     return ""
+
+
+def missing_root(project, which):
+    """The message for a root that is not set, naming the project.
+
+    Naming it is the point. The message is usually correct - most projects on
+    a server have no ``[bb]`` block at all - and without the name a correct
+    message is indistinguishable from the wrong project having been
+    consulted, which is the failure that actually costs time.
+    """
+    name = (project or {}).get("name") or "this project"
+
+    broken = problem(project)
+    if broken:
+        return "%s: %s" % (name, broken)
+
+    return ('%s has no %s set. Add a [bb] block to its brief in Kitsu, '
+            'for example:  [bb] work_root = "E:/Show" render_root = "E:/Show"'
+            % (name, which))
