@@ -124,7 +124,42 @@ def config_for(entity_context=None, project_id=None):
 
     if project_id is None and entity_context is not None:
         project_id = entity_context.project_id
-    return _settings.config(state.project(project_id) if project_id else None)
+
+    # A script with no stamp gets its context from its path, and the path
+    # carries no project - the names stopped repeating what the folders
+    # already say, and the project is the root rather than a folder. The
+    # browser knows which project is open, so fall back to that: a comper
+    # works in one show at a time, and without this the brief is never read
+    # and every root looks unset.
+    if not project_id:
+        project_id = _settings.get('last_project')
+
+    return _settings.config(_project_for(project_id) if project_id else None)
+
+
+def _project_for(project_id):
+    """The project dict for an id, fetching it if the session has not got it.
+
+    A Write can be made from the Nodes menu without the browser ever being
+    opened, and then nothing has loaded the project list - so the brief that
+    carries the roots would not be read, and every root would look unset.
+    One small request, and only when the cache cannot answer.
+    """
+    found = state.project(project_id)
+    if found is not None:
+        return found
+
+    if not state.connected:
+        return None
+    try:
+        found = state.client.project(project_id)
+    except Exception:
+        return None
+
+    if found:
+        # Kept, so the next Write does not ask again.
+        state.projects = list(state.projects) + [found]
+    return found
 
 
 def departments_for_nuke():

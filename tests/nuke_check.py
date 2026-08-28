@@ -347,6 +347,52 @@ def main():
     check(with_project.paths.get("work_root") == "Q:/FromTheBrief",
           "with it, the brief wins (%s)" % with_project.paths.get("work_root"))
 
+    # A script with no stamp gets its context from its path, and the path
+    # carries no project: the names stopped repeating what the folders say,
+    # and the project is the root rather than a folder. Without a fallback
+    # the brief is never read and every root looks unset - which is what a
+    # second scene opened in the same show reported.
+    from BB_core.context import EntityContext as _Ctx
+
+    nameless = _Ctx(group="sc01", entity="sh01", task="Compositing",
+                    entity_type="shot", version=1)
+    check(not nameless.project_id, "a path-recovered context has no project id")
+
+    settings.save({"last_project": "p1"})
+    recovered = session.config_for(nameless)
+    check(recovered.paths.get("work_root") == "Q:/FromTheBrief",
+          "the browser's project fills the gap (%s)"
+          % recovered.paths.get("work_root"))
+
+    # And when the session never loaded the project list at all - a Write
+    # made from the Nodes menu without the browser ever being opened.
+    kept_projects = state.projects
+    kept_client = state.client
+
+    class OneProjectClient:
+        logged_in = True
+        host = "http://kitsu.test"
+        asked = []
+
+        def project(self, project_id):
+            OneProjectClient.asked.append(project_id)
+            return {"id": "p1", "name": "PizzaHunt", "code": None,
+                    "fps": "24", "description": BRIEF_WITH_ROOT}
+
+    state.projects = []
+    state.client = OneProjectClient()
+    fetched = session.config_for(nameless)
+    check(fetched.paths.get("work_root") == "Q:/FromTheBrief",
+          "fetched when the cache is empty (%s)"
+          % fetched.paths.get("work_root"))
+    check(any(p["id"] == "p1" for p in state.projects),
+          "and kept, so the next Write does not ask again")
+    session.config_for(nameless)
+    check(len(OneProjectClient.asked) == 1,
+          "asked for once, not on every Write (%d)" % len(OneProjectClient.asked))
+    state.projects = kept_projects
+    state.client = kept_client
+
     from BB_core import filetree
     state.projects[0]["file_tree"] = {"working": {"folder_path": {
         "shot": "<Sequence>/<Shot>/<TaskType>"}}}
