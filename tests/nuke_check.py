@@ -364,6 +364,19 @@ def main():
           "the browser's project fills the gap (%s)"
           % recovered.paths.get("work_root"))
 
+    # An id that answers nothing is worth no more than no id. A stamp
+    # written against another server, or a project since deleted, otherwise
+    # tells a comper who plainly has a project open that there is none.
+    stale = _Ctx(group="sc01", entity="sh01", task="Compositing",
+                 entity_type="shot", version=1,
+                 project_id="00000000-dead-beef-0000-000000000000")
+    check(session.project_of(stale) is not None
+          and session.project_of(stale)["id"] == "p1",
+          "an id that resolves to nothing falls back to the browser's project")
+    check(session.config_for(stale).paths.get("work_root") == "Q:/FromTheBrief",
+          "and the brief is read after all (%s)"
+          % session.config_for(stale).paths.get("work_root"))
+
     # And when the session never loaded the project list at all - a Write
     # made from the Nodes menu without the browser ever being opened.
     kept_projects = state.projects

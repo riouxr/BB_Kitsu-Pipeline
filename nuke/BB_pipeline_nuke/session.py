@@ -116,42 +116,48 @@ def config_for(entity_context=None, project_id=None):
     """The Config for a context, with the Kitsu project's own settings applied.
 
     Nuke gets its roots from three places in order: the settings file, the
-    project's file_tree, then a [bb] block in the project brief. The last
-    two only happen if the project is handed over, which is why nothing here
-    calls settings.config() bare.
+    project's file_tree, then a ``[bb]`` block in the project brief. The last
+    two only happen if the project is found, which is what ``project_of`` is
+    for - and why nothing here calls ``settings.config()`` bare.
     """
     from BB_core import settings as _settings
 
-    if project_id is None and entity_context is not None:
-        project_id = entity_context.project_id
-
-    # A script with no stamp gets its context from its path, and the path
-    # carries no project - the names stopped repeating what the folders
-    # already say, and the project is the root rather than a folder. The
-    # browser knows which project is open, so fall back to that: a comper
-    # works in one show at a time, and without this the brief is never read
-    # and every root looks unset.
-    if not project_id:
-        project_id = _settings.get('last_project')
-
-    return _settings.config(_project_for(project_id) if project_id else None)
+    return _settings.config(project_of(entity_context, project_id))
 
 
 def project_of(entity_context=None, project_id=None):
-    """The project a context resolves to - the one config_for consulted.
+    """The project a context belongs to, however little it can say about it.
 
-    Public because the root messages name it. A message that does not say
-    which project it looked at cannot be told apart from one that looked at
-    the wrong project, and most projects on a server genuinely have no roots
-    set.
+    Three ways, in order, because a script can be wrong about its project in
+    two different directions:
+
+    * the id it carries, when that id resolves;
+    * the project the browser is open on, when the id is missing - a script
+      with no stamp gets its context from its path, and since the names
+      stopped repeating the folders the path names no project at all;
+    * the browser again, when the id is *present but does not resolve* -
+      a stamp written against another server, or a project since deleted.
+      An id that answers nothing is worth no more than no id, and treating
+      it as authoritative is how a comper who plainly has a project open is
+      told there is none.
+
+    Public because the root messages name what was consulted. A message that
+    does not say which project it looked at cannot be told apart from one
+    that looked at the wrong project.
     """
     from BB_core import settings as _settings
 
     if project_id is None and entity_context is not None:
         project_id = entity_context.project_id
-    if not project_id:
-        project_id = _settings.get('last_project')
-    return _project_for(project_id) if project_id else None
+
+    found = _project_for(project_id) if project_id else None
+    if found is not None:
+        return found
+
+    remembered = _settings.get('last_project')
+    if remembered and remembered != project_id:
+        return _project_for(remembered)
+    return None
 
 
 def _project_for(project_id):
