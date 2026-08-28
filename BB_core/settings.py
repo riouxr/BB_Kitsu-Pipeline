@@ -31,8 +31,11 @@ DEFAULTS = {
     # what a Write made from the Nodes menu has.
     "project_cache": {},
     # Where Open puts a script: "here" replaces what is open, "new" starts a
-    # second Nuke, "ask" offers the choice each time.
-    "open_in": "here",
+    # second Nuke, "ask" offers the choice each time. Asking by default,
+    # because the answer genuinely changes: a comp being finished with is
+    # replaced, and one still wanted for copying nodes out of is not. A
+    # setting made that a decision taken once, in the wrong place.
+    "open_in": "ask",
     # When publishing should close the version it came from, so the work
     # file and the Kitsu revision stay in step rather than three renders
     # piling up against one saved version. SEQUENCE, ALWAYS or NEVER - the

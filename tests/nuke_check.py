@@ -517,9 +517,11 @@ def main():
           "and says nothing about it either")
     nuke.answer = True
 
-    check(settings.get("open_in", "here") == "here",
-          "opening replaces this session unless told otherwise (%s)"
-          % settings.get("open_in", "here"))
+    # Asked each time by default: the answer genuinely changes, between a
+    # comp being finished with and one still wanted for copying nodes out of.
+    check(settings.get("open_in", "ask") == "ask",
+          "opening offers the choice by default (%s)"
+          % settings.get("open_in", "ask"))
 
     # -- opening from the browser is enough to know the project --------------
     # A script written before it was stamped, or by hand, carries nothing to

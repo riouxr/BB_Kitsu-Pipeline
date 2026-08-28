@@ -486,7 +486,10 @@ class Browser(object):
             self._say('No version selected', error=True)
             return
 
-        where = settings.get('open_in', 'here')
+        where = settings.get('open_in', 'ask')
+        # Nothing open worth keeping means nothing to decide.
+        if where == 'ask' and not scripts.current_path():
+            where = 'here'
         if where == 'ask':
             where = self._ask_where(path)
             if not where:
@@ -518,13 +521,21 @@ class Browser(object):
         """'here', 'new' or '' - only asked when the setting says to."""
         _QtCore, QtWidgets = _qt()
 
+        open_script = os.path.basename(scripts.current_path())
+
         box = QtWidgets.QMessageBox(self.dialog)
         box.setWindowTitle(TITLE)
         box.setText('Open %s' % os.path.basename(path))
-        box.setInformativeText('In this Nuke, or a second one?')
-        here = box.addButton('This Nuke', QtWidgets.QMessageBox.AcceptRole)
-        other = box.addButton('New Nuke', QtWidgets.QMessageBox.AcceptRole)
+        box.setInformativeText(
+            'Replace %s, or open alongside it?  A second Nuke keeps '
+            'this one on screen, which is what you want for copying '
+            'nodes across.' % (open_script or 'the open script'))
+        here = box.addButton('Replace This One',
+                             QtWidgets.QMessageBox.AcceptRole)
+        other = box.addButton('Open Alongside',
+                              QtWidgets.QMessageBox.AcceptRole)
         box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(here)
         box.exec()
 
         if box.clickedButton() is here:
