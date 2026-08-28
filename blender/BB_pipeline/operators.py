@@ -316,7 +316,15 @@ class BB_OT_browser(Operator):
         left = split.column()
         tree_box = left.box()
         treeview.draw(tree_box, props)
-        self._draw_entity_facts(left, props)
+
+        # Guarded because it is a caption. Blender stops drawing a panel when
+        # a draw callback raises, so a line of shot facts must never be able
+        # to take the browser with it.
+        try:
+            self._draw_entity_facts(left, props)
+        except Exception as error:
+            print('BB Kitsu Pipeline: could not describe the entity (%s)'
+                  % error)
 
         # -- right: the versions ----------------------------------------------
         right = split.column()
@@ -360,9 +368,12 @@ class BB_OT_browser(Operator):
         facts = []
 
         if not props.is_asset:
-            first, last = frames.frame_range(entity)
-            if first is not None and last is not None:
-                facts.append('%d-%d' % (first, last))
+            # None, not a pair, when a shot carries no frame data. Unpacking
+            # it raised inside a draw callback, which Blender answers by
+            # drawing nothing more.
+            span = frames.frame_range(entity)
+            if span:
+                facts.append('%d-%d' % span)
 
         rate = frames.fps(project, entity)
         if rate:

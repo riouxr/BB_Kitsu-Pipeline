@@ -275,7 +275,16 @@ class Browser(object):
 
         fetch.shot_selected(shot_id)
         self._say(state.message, state.is_error)
-        self._show_facts(shot_id)
+
+        # Guarded because it is a caption. It runs before the tasks are
+        # built, so anything it throws takes the navigation with it - which
+        # is how a shot with no frame range came to look like a shot with no
+        # tasks.
+        try:
+            self._show_facts(shot_id)
+        except Exception as error:
+            self.facts.setText('')
+            print('BB Kitsu Pipeline: could not describe the shot (%s)' % error)
 
         self._loading = True
         chosen = None
@@ -315,9 +324,12 @@ class Browser(object):
         project = state.project(self._id(self.project)) or {}
 
         facts = []
-        first, last = frames.frame_range(shot)
-        if first is not None and last is not None:
-            facts.append('%d-%d' % (first, last))
+        # None, not a pair, when a shot carries no frame data - which plenty
+        # do. Unpacking it raised, and the raise happened before the task
+        # rows were built, so the shot simply appeared to have no tasks.
+        span = frames.frame_range(shot)
+        if span:
+            facts.append('%d-%d' % span)
 
         rate = frames.fps(project, shot)
         if rate:

@@ -401,6 +401,7 @@ def main():
     # A Kitsu Write left aimed at the previous version is worse than one
     # never set: the frames land somewhere plausible and wrong, and the first
     # anybody knows is a comp reading a render from an older script.
+    from BB_core import frames as nuke_frames
     from BB_pipeline_nuke import review as nuke_review
     from BB_pipeline_nuke import writenode as _writenode
 
@@ -416,6 +417,33 @@ def main():
     check("v002" not in after, "and off the version before it")
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
+
+    # -- a shot with no frame range still lists its tasks ---------------------
+    # frames.frame_range returns None rather than a pair when a shot carries
+    # no frame data, and plenty do. Unpacking it raised in the caption above
+    # the task rows, so the shot looked like it simply had no tasks - and
+    # then nothing could be created, because no task could be picked.
+    bare = {"id": "sh9", "name": "Stills", "parent_id": "s1"}
+    state.shots = state.shots + [bare]
+    state.tasks = [{"id": "t9", "task_type_id": "tt2"}]
+
+    check(nuke_frames.frame_range(bare) is None,
+          "a shot with no frame data has no range (%r)"
+          % (nuke_frames.frame_range(bare),))
+    check([state.task_type_name(t["task_type_id"])
+           for t in state.browsable_tasks()] == ["Compositing"],
+          "and its tasks are still there to list")
+
+    # The caption is what used to raise; it has to cope on its own.
+    facts = []
+    span = nuke_frames.frame_range(bare)
+    if span:
+        facts.append("%d-%d" % span)
+    rate = nuke_frames.fps(state.projects[0], bare)
+    if rate:
+        facts.append(nuke_frames.describe(rate))
+    check(facts == ["24 fps"],
+          "the caption drops the range it does not have (%s)" % facts)
 
     # -- a Write has to render into this script's own version folder ---------
     # A Write copied in from another shot keeps that shot's path, and
