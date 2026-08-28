@@ -26,6 +26,10 @@ DEFAULTS = {
     # Windows needs to be told that E: is /Volumes/Misery. Machine-local on
     # purpose - it describes this computer, not the show.
     "volumes": {},
+    # What the browser last saw of a project - its name, brief and file
+    # tree. Enough to build a config from with no Kitsu session, which is
+    # what a Write made from the Nodes menu has.
+    "project_cache": {},
     # When publishing should close the version it came from, so the work
     # file and the Kitsu revision stay in step rather than three renders
     # piling up against one saved version. SEQUENCE, ALWAYS or NEVER - the

@@ -364,6 +364,32 @@ def main():
           "the browser's project fills the gap (%s)"
           % recovered.paths.get("work_root"))
 
+    # The case that matters most: a Write made from the Nodes menu in a Nuke
+    # that never opened the browser. There is no Kitsu session at all, so
+    # nothing that needs the server can answer - and the roots live in the
+    # project's brief. What the browser last saw is kept for exactly this.
+    session.remember_project(state.projects[0])
+    kept_client_2 = state.client
+    kept_projects_2 = state.projects
+    state.client = None
+    state.projects = []
+    try:
+        check(not state.connected, "no Kitsu session, as a fresh Nuke has none")
+        offline = session.project_of(_Ctx(group="sc01", entity="sh01",
+                                          task="Compositing",
+                                          entity_type="shot", version=1))
+        check(offline is not None and offline.get("name") == "PizzaHunt",
+              "the project is found without one (%s)"
+              % (offline or {}).get("name"))
+        check(session.config_for(_Ctx(group="sc01", entity="sh01",
+                                      task="Compositing", entity_type="shot",
+                                      version=1)).paths.get("work_root")
+              == "Q:/FromTheBrief",
+              "and its brief still supplies the roots")
+    finally:
+        state.client = kept_client_2
+        state.projects = kept_projects_2
+
     # An id that answers nothing is worth no more than no id. A stamp
     # written against another server, or a project since deleted, otherwise
     # tells a comper who plainly has a project open that there is none.

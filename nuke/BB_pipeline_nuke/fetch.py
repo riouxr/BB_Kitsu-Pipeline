@@ -92,6 +92,10 @@ def project_selected(project_id):
     if not state.connected or not project_id:
         return
 
+    # Kept before anything else, so a later Write can find the roots with no
+    # session at all.
+    session.remember_project(state.project(project_id))
+
     client = state.client
     try:
         state.sequences = client.sequences(project_id)
