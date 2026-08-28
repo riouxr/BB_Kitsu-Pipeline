@@ -486,11 +486,13 @@ class Browser(object):
             self._say('No version selected', error=True)
             return
 
-        where = settings.get('open_in', 'ask')
-        # Nothing open worth keeping means nothing to decide.
-        if where == 'ask' and not scripts.current_path():
-            where = 'here'
-        if where == 'ask':
+        # Always asked, never a setting. Which answer is right changes from
+        # one open to the next - a comp being finished with is replaced, one
+        # still wanted for copying nodes out of is not - so a stored choice
+        # is wrong half the time, and a stored choice written by an older
+        # build silently stopped this being asked at all.
+        where = 'here'
+        if scripts.current_path():
             where = self._ask_where(path)
             if not where:
                 return
@@ -824,18 +826,6 @@ def show_settings():
     form.addRow('Work Root', work_root)
     form.addRow('Render Root', render_root)
 
-    # Where Open puts a script. Worth a setting rather than a prompt every
-    # time: most people want one answer and want to stop being asked.
-    open_in = QtWidgets.QComboBox()
-    for label, value in (('This Nuke', 'here'),
-                         ('A second Nuke', 'new'),
-                         ('Ask each time', 'ask')):
-        open_in.addItem(label, value)
-    wanted = settings.get('open_in', 'here')
-    index = open_in.findData(wanted)
-    if index >= 0:
-        open_in.setCurrentIndex(index)
-    form.addRow('Open Scripts In', open_in)
 
     layout.addLayout(form)
 
@@ -903,7 +893,6 @@ def show_settings():
         'email': email.text().strip(),
         'work_root': work_root.text().strip(),
         'render_root': render_root.text().strip(),
-        'open_in': open_in.currentData() or 'here',
     })
 
     typed = password.text()

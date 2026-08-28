@@ -539,11 +539,17 @@ def main():
           "and says nothing about it either")
     nuke.answer = True
 
-    # Asked each time by default: the answer genuinely changes, between a
-    # comp being finished with and one still wanted for copying nodes out of.
-    check(settings.get("open_in", "ask") == "ask",
-          "opening offers the choice by default (%s)"
-          % settings.get("open_in", "ask"))
+    # Asked every time, never stored. A stored choice is wrong half the
+    # time, and one written by an older build silently stopped this being
+    # asked at all - which is exactly what happened.
+    check("open_in" not in settings.DEFAULTS,
+          "where to open is not a setting")
+    source = (Path(REPO) / "nuke" / "BB_pipeline_nuke" / "browser.py").read_text(
+        encoding="utf-8")
+    check("settings.get('open_in'" not in source,
+          "and the browser does not read one")
+    check("self._ask_where(path)" in source,
+          "it asks instead")
 
     # -- opening from the browser is enough to know the project --------------
     # A script written before it was stamped, or by hand, carries nothing to
