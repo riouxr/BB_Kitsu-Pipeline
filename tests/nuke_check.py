@@ -503,6 +503,24 @@ def main():
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
 
+    # -- opening no longer asks about work nobody changed --------------------
+    # The add-on stamps the root and repoints Writes, so nuke.modified() is
+    # true after any pipeline action whether or not the artist touched
+    # anything. open_version used to prompt on that, which meant a prompt on
+    # scripts nobody had changed.
+    nuke.answer = False          # "no" to anything still asking
+    asked_before = len(nuke.messages)
+    reopened = scripts.open_version(created, context)
+    check(reopened == created,
+          "opening does not ask about unsaved work (%s)" % reopened)
+    check(len(nuke.messages) == asked_before,
+          "and says nothing about it either")
+    nuke.answer = True
+
+    check(settings.get("open_in", "here") == "here",
+          "opening replaces this session unless told otherwise (%s)"
+          % settings.get("open_in", "here"))
+
     # -- opening from the browser is enough to know the project --------------
     # A script written before it was stamped, or by hand, carries nothing to
     # identify it. The browser knew which project it opened from, and

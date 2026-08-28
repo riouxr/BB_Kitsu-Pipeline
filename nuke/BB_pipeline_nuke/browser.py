@@ -485,6 +485,26 @@ class Browser(object):
         if not path:
             self._say('No version selected', error=True)
             return
+
+        where = settings.get('open_in', 'here')
+        if where == 'ask':
+            where = self._ask_where(path)
+            if not where:
+                return
+
+        if where == 'new':
+            try:
+                scripts.open_elsewhere(path)
+            except scripts.ScriptError as error:
+                self._say(str(error), error=True)
+                return
+            self._say('opening %s in a second Nuke' % os.path.basename(path))
+            self.dialog.accept()
+            return
+
+        if not self._settle_unsaved(path):
+            return
+
         try:
             opened = scripts.open_version(path, self.context())
         except scripts.ScriptError as error:
@@ -493,6 +513,59 @@ class Browser(object):
         if opened:
             self._say('opened %s' % os.path.basename(opened))
             self.dialog.accept()
+
+    def _ask_where(self, path):
+        """'here', 'new' or '' - only asked when the setting says to."""
+        _QtCore, QtWidgets = _qt()
+
+        box = QtWidgets.QMessageBox(self.dialog)
+        box.setWindowTitle(TITLE)
+        box.setText('Open %s' % os.path.basename(path))
+        box.setInformativeText('In this Nuke, or a second one?')
+        here = box.addButton('This Nuke', QtWidgets.QMessageBox.AcceptRole)
+        other = box.addButton('New Nuke', QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.exec()
+
+        if box.clickedButton() is here:
+            return 'here'
+        if box.clickedButton() is other:
+            return 'new'
+        return ''
+
+    def _settle_unsaved(self, path):
+        """True when it is alright to replace what is open.
+
+        Only asked when the open script has somewhere to be saved and has
+        really changed. The pipeline stamps the root and repoints Writes, so
+        a script can be 'modified' without the artist having touched it -
+        which is why this compares against the file on disk rather than
+        trusting nuke.modified() alone.
+        """
+        _QtCore, QtWidgets = _qt()
+
+        if not scripts.is_modified() or not scripts.current_path():
+            return True
+
+        box = QtWidgets.QMessageBox(self.dialog)
+        box.setWindowTitle(TITLE)
+        box.setText('%s has unsaved changes.'
+                    % os.path.basename(scripts.current_path()))
+        box.setInformativeText('Save it before opening %s?'
+                               % os.path.basename(path))
+        save = box.addButton('Save', QtWidgets.QMessageBox.AcceptRole)
+        discard = box.addButton("Don't Save", QtWidgets.QMessageBox.DestructiveRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.exec()
+
+        if box.clickedButton() is save:
+            try:
+                scripts.save_open_script()
+            except scripts.ScriptError as error:
+                self._say(str(error), error=True)
+                return False
+            return True
+        return box.clickedButton() is discard
 
     def _import(self):
         if not self._authoring:
@@ -739,6 +812,20 @@ def show_settings():
     form.addRow('Password', password)
     form.addRow('Work Root', work_root)
     form.addRow('Render Root', render_root)
+
+    # Where Open puts a script. Worth a setting rather than a prompt every
+    # time: most people want one answer and want to stop being asked.
+    open_in = QtWidgets.QComboBox()
+    for label, value in (('This Nuke', 'here'),
+                         ('A second Nuke', 'new'),
+                         ('Ask each time', 'ask')):
+        open_in.addItem(label, value)
+    wanted = settings.get('open_in', 'here')
+    index = open_in.findData(wanted)
+    if index >= 0:
+        open_in.setCurrentIndex(index)
+    form.addRow('Open Scripts In', open_in)
+
     layout.addLayout(form)
 
     note = QtWidgets.QLabel(
@@ -805,6 +892,7 @@ def show_settings():
         'email': email.text().strip(),
         'work_root': work_root.text().strip(),
         'render_root': render_root.text().strip(),
+        'open_in': open_in.currentData() or 'here',
     })
 
     typed = password.text()

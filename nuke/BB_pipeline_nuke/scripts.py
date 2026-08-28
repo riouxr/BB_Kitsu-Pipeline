@@ -5,6 +5,7 @@ by the core, from what is on disk - never typed in, never inferred twice - and
 the script that gets saved carries the context that named it.
 '''
 import os
+import sys
 
 from BB_core import settings, versioning, workfiles
 
@@ -31,8 +32,47 @@ def current_path():
     return '' if not name or name == 'Root' else name
 
 
+def open_elsewhere(path):
+    """Launch another Nuke on *path*. Returns the path, or '' if it could not.
+
+    A second session rather than replacing this one, for the times a comp is
+    still wanted on screen while another is opened. Detached on purpose: the
+    new Nuke outlives whatever started it.
+    """
+    import subprocess
+
+    nuke = _nuke()
+
+    executable = getattr(nuke, 'EXE_PATH', '') or sys.executable
+    if not executable or not os.path.isfile(str(executable)):
+        raise ScriptError('Cannot find Nuke to start a second session (%s)'
+                          % executable)
+
+    try:
+        subprocess.Popen([str(executable), str(path)], close_fds=True)
+    except Exception as error:
+        raise ScriptError('Could not start a second Nuke: %s' % error)
+    return path
+
+
+def save_open_script():
+    """Save the script that is open, if it has somewhere to be saved."""
+    nuke = _nuke()
+
+    where = current_path()
+    if not where:
+        raise ScriptError('This script has never been saved, so there is '
+                          'nowhere to save it to - use New Version instead')
+    nuke.scriptSave(where)
+    return where
+
 def open_version(path, known=None):
-    '''Open a .nk script, refusing rather than discarding unsaved work.
+    '''Open a .nk script in this session.
+
+    Asking about unsaved work is the caller's job. This add-on stamps the
+    root and repoints Write nodes, so nuke.modified() is true after any
+    pipeline action whether or not the artist touched anything - and the
+    prompt that used to live here fired on scripts nobody had changed.
 
     ``known`` is the context the browser opened it from. A script written
     before it was stamped, or by hand, carries nothing to identify it - and
@@ -43,11 +83,6 @@ def open_version(path, known=None):
 
     if not os.path.isfile(path):
         raise ScriptError('File is gone: %s' % path)
-
-    if is_modified():
-        if not nuke.ask('The current script has unsaved changes.\n\n'
-                        'Open %s anyway?' % os.path.basename(path)):
-            return ''
 
     nuke.scriptOpen(path)
     state.context = stamp.read() or known
