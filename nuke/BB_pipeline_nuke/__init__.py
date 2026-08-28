@@ -16,7 +16,7 @@ from . import core
 # Has to happen before the submodules that import BB_core are touched.
 core.bootstrap()
 
-__version__ = '0.10.4'
+__version__ = '1.0.0'
 
 MENU = 'Kitsu'
 
