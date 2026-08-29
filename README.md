@@ -6,8 +6,9 @@ render with derived names and publish back — the same way in every
 application, because every application calls the same core.
 
 Status: **early**. The shared core and the Blender shot browser work. Nuke has
-browsing, work files and publishing. Resolve renders the current timeline and
-publishes it back with a derived, per-project render path.
+browsing, work files and publishing. Resolve has browsing, project
+open/create, and a Render ▸ Review ▸ Publish flow with a derived, per-project
+render path.
 
 ## Layout
 
@@ -27,7 +28,13 @@ blender/BB_pipeline/         the Blender extension
 nuke/BB_pipeline_nuke/       the Nuke integration
 nuke/install.py                adds the Kitsu menu to ~/.nuke/menu.py
 resolve/BB_pipeline_resolve/ the DaVinci Resolve integration
-resolve/kitsu_resolve_publisher.py   the launcher script Resolve runs
+  ui_pyside.py                real PySide UI (UI-B) - run standalone
+  ui_a.py                     Fusion UIManager UI (UI-A) - fallback only
+resolve/kitsu_resolve_publisher.py   the standalone launcher
+resolve/Launch Kitsu Publisher.bat   double-click launcher (Windows)
+resolve/test_standalone_window.py    diagnostic: does a bare PySide window
+                                     work run standalone, with nothing else
+                                     involved
 tools/                       build and development install scripts
 tests/                       core tests, plus a per-DCC integration test
 ```
@@ -69,6 +76,26 @@ folder, format and colorspace. The layout is
 Kitsu ids — into the scene, so reopening restores it with no server round
 trip. Filename parsing is the fallback for files that predate the add-on, and
 it is flagged as id-less so publishing knows it still has work to do.
+
+## Install
+
+The shared core (`BB_core`) has no third-party dependencies at all. What
+each DCC needs beyond the repo itself:
+
+| | Requires | Install | Run |
+|---|---|---|---|
+| **Blender** | Blender 4.2+ | `python tools/build_extension.py`, then **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk** with the zip it produces | opens with Blender |
+| **Nuke** | Nuke 16+ | `"path/to/Nuke's python.exe" nuke/install.py` — patches `~/.nuke/menu.py` | **Kitsu** menu appears after restart |
+| **Resolve** | **Resolve Studio** (the free version has no external scripting API), and **PySide6 or PySide2** pip-installed in whichever Python runs the launcher | copy `resolve/kitsu_resolve_publisher.py`, `resolve/BB_pipeline_resolve/` and `BB_core/` anywhere — not `Scripts/Comp` | `python kitsu_resolve_publisher.py`, as its own process, with Resolve already running and a project open — **never** through Workspace ▸ Scripts (see the Resolve section below for why) |
+
+Each tool asks for the Kitsu server URL and your email on first connect; the
+password goes to the Windows Credential Manager or macOS Keychain, shared
+across all three, so signing in once signs in everywhere on that machine. On
+Linux, password storage needs the `keyring` package.
+
+Full detail, including troubleshooting, is in each DCC's own section below.
+
+Just ask Claude Code to install it for you. ;-)
 
 ## Blender add-on
 
@@ -676,70 +703,104 @@ piece.
 
 ## DaVinci Resolve
 
-Resolve browses **shots only** and, like Nuke, sorts the task list so the
-tasks it is configured for come first rather than hiding the rest:
+Resolve browses **shots only**, and its own department list is grading and
+editorial — deliberately not Compositing/2D, which Nuke already claims:
 
 ```toml
 [dcc.resolve]
 ext = "drp"
-departments = ["Compositing", "2D"]
+departments = ["Color", "Color Grading", "Editing", "Editorial"]
 ```
 
-### Install
+A task neither DCC claims still shows up in the browser, marked
+**(renders)**, the same way Nuke's browser marks a task it does not author —
+Resolve reads its rendered frames straight off the render root instead of
+offering to open a Resolve project for it. A studio that really does comp in
+Resolve can add `Compositing`/`2D` back in a `config.toml` override.
 
-Requires **Resolve Studio** — the free version has no scripted render queue.
-Copy `resolve/kitsu_resolve_publisher.py`, `resolve/BB_pipeline_resolve/` and
-`BB_core/` into:
+### Install and run
 
+Requires **Resolve Studio** — the free version has no scripted render queue
+and no external scripting API. Copy `resolve/kitsu_resolve_publisher.py`,
+`resolve/BB_pipeline_resolve/` and `BB_core/` anywhere convenient —
+deliberately **not** Resolve's `Scripts/Comp` folder, so there is nothing
+sitting in Workspace ▸ Scripts inviting the one launch method that does not
+work (see below). Running from a checkout of this repository works too, with
+nothing to copy.
+
+With Resolve already running and a project open, launch it as its **own
+process** — a terminal, `resolve/Launch Kitsu Publisher.bat` on Windows, a
+shell script or desktop shortcut elsewhere:
+
+```bash
+python kitsu_resolve_publisher.py
 ```
-Windows: %APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Comp\
-macOS:   ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Comp/
-```
 
-so the folder reads `Scripts/Comp/kitsu_resolve_publisher.py` next to
-`Scripts/Comp/BB_pipeline_resolve/` and `Scripts/Comp/BB_core/`. Nothing to
-pip install — Kitsu access goes through `BB_core.transport`, the same
-dependency-free path Nuke uses. Run it from **Workspace ▸ Scripts ▸
-kitsu_resolve_publisher**.
+using whichever Python has PySide6 or PySide2 installed. **Never** from
+Resolve's Workspace ▸ Scripts menu — that runs a script inside Fusion's own
+script host, and starting a second Qt event loop there is a long-documented
+Fusion bug ("PySide freezes Fusion", reported since Fusion 7): the window
+builds without error and simply never appears, then vanishes the moment the
+script returns. `resolve/test_standalone_window.py` is a two-line
+reproduction of exactly that, for confirming a given machine's Python/PySide
+setup works before troubleshooting anything else. The tool connects into the
+already-running Resolve via `DaVinciResolveScript.scriptapp('Resolve')`
+rather than being launched by it — `resolve_ops._connect_external` sets up
+the standard `RESOLVE_SCRIPT_API`/`RESOLVE_SCRIPT_LIB` environment for that
+on its own.
 
 The password goes to the Windows Credential Manager — the same store Blender
 and Nuke use, so signing in once anywhere signs in everywhere. The earlier
 version of this tool kept it in plain text in `~/.kitsu_resolve.json`; that
 file is no longer written to.
 
+### Two UI builds
+
+`kitsu_resolve_publisher.py` tries **UI-B** (`ui_pyside.py`) first — real
+PySide widgets, the same approach Nuke's own `browser.py` uses, with a real
+`QPalette` dark theme, reliably-honoured `FixedHeight`/`setVisible`, and a
+genuine `:disabled` stylesheet state for buttons. If PySide is not
+importable in that Python, it falls back to **UI-A** (`ui_a.py`), built on
+Fusion's `UIManager` wrapper — several of that wrapper's property names look
+like real Qt (`MinimumSize`, `Weight`, a StyleSheet string) but did not
+behave like it, and are not documented anywhere; UI-A is kept only as a
+fallback and is not developed further.
+
 ### What it does
 
-One window, two tabs — the same split Nuke's menu makes between browsing and
-a Kitsu Write's own controls, rather than one screen trying to be both:
+One window with **Browse** and **Publish** as switchable panels, the same
+split Nuke's menu makes between browsing and a Kitsu Write's own controls:
 
-| Tab | | |
-|---|---|---|
-| **Browse** | Project ▸ Sequence ▸ Shot ▸ **Task**, then **Open**, **New Version** or **New Version From Current** | the same three choices Blender's browser offers as Open / New vNNN / New vNNN from Current Scene, applied to a Resolve project instead of a `.blend` |
-| **Publish** | the task Browse assigned (read-only), status, render preset, comment, then **Render**, **Review**, **Publish** as three separate steps | nothing here decides which shot or task — that was Browse's job |
+Browse is a navigation tree on the left — Sequence ▸ Shot ▸ Task, filled in
+lazily as branches are expanded, so opening the browser never asks Kitsu for
+every task on every shot up front — and a version list with pictures on the
+right, closely mirroring Nuke's own browser layout. Picking a task shows
+what already exists for that exact shot + task pair, and offers:
 
-Picking a shot and task in Browse shows what is already on disk for that
-exact pair — *"Latest on disk: v002"* or *"No Resolve project yet"* — and:
-
-- **Open** loads the latest existing version. Disabled when there is none.
-- **New Version** creates a blank project at the next version.
-- **New Version From Current** copies **whatever Resolve project is open
+- **Open** — loads the version selected in the list. Disabled with nothing
+  to open.
+- **New Version** — creates a blank Resolve project at the next version.
+- **New Version From Current** — copies **whatever Resolve project is open
   right now** into the next version — the old "Assign Shot to Existing
   Project" flow, minus picking a name from a list: the source is just
   whatever you're already sitting in.
+- **Import in Media Storage** — for a "(renders)" task: brings the selected
+  rendered version's frames into the Media Pool via Resolve's Media Storage,
+  which groups a numbered sequence into one clip the way picking it by hand
+  in the Media page would.
 
-Confirming any of the three switches straight to the Publish tab — there is
-something open and assigned with nothing further to click. A Color Grading
-task and a Compositing task on the same shot get their own projects, named
-`Project_Sequence_Shot_Task_vNNN`; a Resolve project is a flat, studio-wide
-namespace with no folder of its own, so the task has to be in the name or
-the two would collide. Reopening a project already named that way restores
-the full context — project, sequence, shot **and** task — the same
-auto-detect Blender and Nuke context stamps provide from a saved file.
+Confirming Open/New Version/New From Current switches straight to Publish —
+there is something open and assigned with nothing further to click. A Color
+Grading task and a Compositing task on the same shot get their own projects,
+named `Project_Sequence_Shot_Task_vNNN`; a Resolve project is a flat,
+studio-wide namespace with no folder of its own, so the task has to be in
+the name or the two would collide. Reopening a project already named that
+way restores the full context — project, sequence, shot **and** task — the
+same auto-detect Blender and Nuke context stamps provide from a saved file.
 
 The render root is resolved from the Kitsu project's own settings — its file
 tree or its Brief `[bb]` block, the same chain `BB_core.workfiles` uses for
-every other DCC — and is never shown or typed in: Browse is what decides the
-shot and task, and that is all the path needs. It lands at:
+every other DCC — and is never shown or typed in. It lands at:
 
 ```
 <render_root>/<sequence>/<shot>/<task>/Render/offline/v003/<shot>_v003.mp4
@@ -753,12 +814,15 @@ export.
 
 **Render** renders the current timeline to that path and stops — nothing is
 sent to Kitsu yet. **Review** imports the result into Resolve's own Media
-Pool and loads it on a dedicated `Kitsu Review` timeline, so it can be
-scrubbed in Resolve's own player — a colourist works in clips, not files in
-a folder, so review means landing it where Resolve can play it, not opening
-some other application. **Publish** uploads the exact file Render produced,
-with the status and comment from the form — it never re-renders. Reselect
-your working timeline in the Edit page once you're done reviewing.
+Pool and loads it on a dedicated `Kitsu Review` timeline, cleared before
+every render (its one clip is the exact file about to be overwritten) as
+well as before every review, so scrubbing an older render is never mistaken
+for the one about to be published. **Publish** uploads the exact file Render
+produced, with the status and comment from the form — it never re-renders.
+Both Render and Publish restore whatever timeline was actually being worked
+in — tracked by name, re-found fresh each time rather than trusted from a
+handle that might have gone stale — so Review switching away, or Publish
+finishing, never leaves the wrong timeline current.
 
 ### Status list — the project's own
 
@@ -769,23 +833,24 @@ uses, not the full studio-wide list every production has ever needed —
 ### Sign-in section collapses
 
 The account fields (server, email, password) collapse automatically once
-signed in — a session that is already connected has nothing left to say
-there — and the **▾** button before **ACCOUNT** folds them back open by
-hand, for switching servers or accounts without restarting the tool.
+signed in, and the triangle beside **ACCOUNT** folds them back open by hand
+for switching servers or accounts without restarting the tool.
 
-### Thumbnails in Browse
+### Thumbnails
 
-Browse shows the selected shot's Kitsu thumbnail next to the tree. Fusion's
-Tree control cannot draw an image per row, so the picture is a single
-preview that updates as a row is clicked, downloaded once per preview file
-and cached the same way the Nuke browser caches its own.
+UI-B shows the selected shot's Kitsu thumbnail as a real `QPixmap`, and
+repeats it as the icon on every row of the version list — real Qt, no
+per-row image support to work around the way UI-A's Fusion `Tree` control
+needed.
 
 ### Not there yet
 
-Reading another department's renders — a Nuke comp or a Blender lighting
-pass — into Resolve's Media Pool. Planned as its own pass once this redesign
-has settled; `BB_core.workfiles.render_versions` already has what it would
-need to find them.
+A nested Sequence ▸ Shot ▸ Task tree exists now; per-version thumbnails do
+not — Resolve has no local `.thumbs` folder the way Blender's saves do, so
+every row shows the shot's own Kitsu picture rather than one specific to
+that version. Reading another department's renders is implemented for
+Browse's Import button; a general-purpose way to pull them into an arbitrary
+point in a timeline is not.
 
 ## Configuration
 
