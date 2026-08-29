@@ -75,7 +75,14 @@ departments = ["Compositing", "2D"]
 
 [dcc.resolve]
 ext = "drp"
-departments = ["Compositing", "2D"]
+# Resolve's own work, not copy-pasted from Nuke's list: grading and
+# editorial is what it is actually used for. Deliberately does NOT claim
+# Compositing/2D - Nuke already does, and a task both DCCs think they author
+# is a task whose renders Resolve's Browse tab never offers to Import,
+# because it looks like one of Resolve's own project-workflow tasks instead.
+# A studio that really does comp in Resolve can add them back in a
+# config.toml override.
+departments = ["Color", "Color Grading", "Editing", "Editorial"]
 
 # Parallel outputs derivable from one render context. Only `main` is wired up
 # yet; the rest are here so the shape is settled before the render side lands.
