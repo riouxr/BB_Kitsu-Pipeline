@@ -58,6 +58,7 @@ def viewport_png(context=None, percentage=DEFAULT_PERCENTAGE):
         'resolution_percentage': render.resolution_percentage,
         'use_file_extension': render.use_file_extension,
         'use_overwrite': render.use_overwrite,
+        'film_transparent': render.film_transparent,
         'file_format': image.file_format,
         'color_mode': image.color_mode,
     }
@@ -67,6 +68,15 @@ def viewport_png(context=None, percentage=DEFAULT_PERCENTAGE):
         render.resolution_percentage = int(percentage)
         render.use_file_extension = False
         render.use_overwrite = True
+
+        # A shot set up to render with alpha - which is most of them - grabs
+        # a transparent background here, and a transparent background written
+        # to an RGB PNG is a black one. Free orbit views escape it because
+        # film transparency only applies to the camera framing, so the same
+        # scene gave a good thumbnail one minute and a black rectangle the
+        # next, purely by having entered camera view.
+        render.film_transparent = False
+
         image.file_format = 'PNG'
         image.color_mode = 'RGB'
 
@@ -85,6 +95,7 @@ def viewport_png(context=None, percentage=DEFAULT_PERCENTAGE):
         render.resolution_percentage = saved['resolution_percentage']
         render.use_file_extension = saved['use_file_extension']
         render.use_overwrite = saved['use_overwrite']
+        render.film_transparent = saved['film_transparent']
         image.file_format = saved['file_format']
         image.color_mode = saved['color_mode']
 

@@ -397,6 +397,47 @@ def main():
               "the preview preference is put back afterwards")
         paths.file_preview_type = "AUTO"
 
+        # A scene rendering with alpha - most of them - used to grab a
+        # transparent background, and transparent written to an RGB PNG is
+        # black. It only bit in camera view, because film transparency does
+        # not apply to a free orbit view, so the same scene gave a good
+        # thumbnail one minute and a black rectangle the next.
+        scene = bpy.context.scene
+        was_transparent = scene.render.film_transparent
+        scene.render.film_transparent = True
+
+        seen = {}
+        real_bpy = capture.bpy
+
+        class _RenderOps:
+            def opengl(self, **kwargs):
+                seen["film"] = real_bpy.context.scene.render.film_transparent
+                with open(real_bpy.context.scene.render.filepath, "wb") as handle:
+                    handle.write(b"not a real png, but not empty either")
+
+        class _Ops:
+            render = _RenderOps()
+
+        class _Shim:
+            ops = _Ops()
+            context = real_bpy.context
+            data = real_bpy.data
+
+        capture.bpy = _Shim()
+        try:
+            grabbed = capture.viewport_png(bpy.context)
+        finally:
+            capture.bpy = real_bpy
+
+        check(seen.get("film") is False,
+              "the thumbnail grab renders on an opaque background (%r)"
+              % seen.get("film"))
+        check(scene.render.film_transparent is True,
+              "and puts film transparency back afterwards")
+        if grabbed:
+            capture.discard(grabbed)
+        scene.render.film_transparent = was_transparent
+
         # No GPU in background mode, so this must return 0 rather than raise.
         made = capture.generate_datablock_previews(bpy.context)
         check(isinstance(made, int),
