@@ -163,45 +163,9 @@ def project_of(entity_context=None, project_id=None):
     # Last: what the browser saw the last time it loaded a project. A Write
     # made from the Nodes menu in a Nuke that has not opened the browser has
     # no Kitsu session at all, and nothing above can answer without one.
-    return cached_project(project_id) or cached_project()
+    from BB_core import projects
 
-
-def remember_project(project):
-    """Keep what a project says about paths, so a Write needs no server.
-
-    The roots live in the project's Kitsu brief, so finding them used to
-    need a live session - and a Write made from the Nodes menu in a Nuke
-    that has not opened the browser has none. Nothing then resolved, and
-    every root read as unset on a show that plainly had them.
-
-    Only the fields the config is built from are kept, in the settings file
-    beside the rest of this machine's state.
-    """
-    if not project or not project.get("id"):
-        return
-
-    from BB_core import settings as _settings
-
-    _settings.save({"project_cache": {
-        "id": project["id"],
-        "name": project.get("name") or "",
-        "description": project.get("description") or "",
-        "file_tree": project.get("file_tree"),
-        "resolution": project.get("resolution"),
-        "fps": project.get("fps"),
-    }})
-
-
-def cached_project(project_id=None):
-    """The remembered project, when it is the one being asked about."""
-    from BB_core import settings as _settings
-
-    kept = _settings.get("project_cache") or {}
-    if not kept.get("id"):
-        return None
-    if project_id and kept["id"] != project_id:
-        return None
-    return kept
+    return projects.cached(project_id) or projects.cached()
 
 
 def _project_for(project_id):

@@ -675,6 +675,45 @@ def main():
         finally:
             bpy.data.images.remove(made_up)
 
+        # -- an asset opened with no session still gets its render path -------
+        # The roots live in the project's Kitsu brief, so finding them used
+        # to need the browser to be pointed at that project. A .blend opened
+        # from disk in a Blender that has never connected has no such
+        # selection, and the output path was then silently not set at all.
+        from BB_core import projects as core_projects
+
+        kept_projects = session.state.projects
+        kept_client = session.state.client
+        core_projects.remember(PROJECT)
+
+        asset_context = fetch.current_context(bpy.context)
+        with properties.suspend_updates():
+            props_asset = properties.get()
+            props_asset.entity_type = "ASSET"
+            props_asset.asset_type = ASSET_TYPE["id"]
+            props_asset.asset = ASSET["id"]
+            props_asset.task = TASK["id"]
+        asset_context = fetch.current_context(bpy.context)
+        check(asset_context is not None and asset_context.entity_type == "asset",
+              "an asset context to place renders for")
+
+        session.state.projects = []
+        session.state.client = None
+        try:
+            bpy.context.scene.render.filepath = "/tmp/"
+            note = scenesync.set_output(bpy.context, asset_context)
+            here = bpy.context.scene.render.filepath
+            check(bool(note), "the render path is set with no session (%s)" % note)
+            check("assets" in here.replace("\\", "/"),
+                  "under the asset tree (%s)" % here)
+            check(ASSET["name"] in here,
+                  "naming the asset (%s)" % here)
+        finally:
+            session.state.projects = kept_projects
+            session.state.client = kept_client
+            with properties.suspend_updates():
+                props_asset.entity_type = "SHOT"
+
         # -- a render belongs to the file it came out of ---------------------
         # Opening another asset used to leave the previous render standing,
         # still offered for publishing - and it published the previous

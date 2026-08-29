@@ -94,7 +94,8 @@ def project_selected(project_id):
 
     # Kept before anything else, so a later Write can find the roots with no
     # session at all.
-    session.remember_project(state.project(project_id))
+    from BB_core import projects
+    projects.remember(state.project(project_id))
 
     client = state.client
     try:

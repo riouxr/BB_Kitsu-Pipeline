@@ -192,6 +192,11 @@ def project_selected(context):
         # production has ever needed.
         from .BB_core.kitsu import statuses_for
         state.statuses = statuses_for(state.project(project_id), statuses)
+
+        # Kept so a scene opened later, in a Blender that has not connected,
+        # can still find the roots the project's brief carries.
+        from .BB_core import projects
+        projects.remember(state.project(project_id))
         state.task_departments = _task_departments(context)
 
         state.say('%d shot(s), %d asset(s)' % (len(shots), len(assets)))
@@ -288,6 +293,11 @@ def refresh_project(context=None):
         # production has ever needed.
         from .BB_core.kitsu import statuses_for
         state.statuses = statuses_for(state.project(project_id), statuses)
+
+        # Kept so a scene opened later, in a Blender that has not connected,
+        # can still find the roots the project's brief carries.
+        from .BB_core import projects
+        projects.remember(state.project(project_id))
         state.task_departments = _task_departments(context)
 
         known = ({s['id'] for s in sequences} | {s['id'] for s in shots}

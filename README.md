@@ -80,7 +80,7 @@ python tools/build_extension.py
 ```
 
 Then in Blender: **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk**, pick
-`dist/BB_pipeline-1.0.0.zip`.
+`dist/BB_pipeline-1.0.1.zip`.
 
 ### Develop
 

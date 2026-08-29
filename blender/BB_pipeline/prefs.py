@@ -560,14 +560,37 @@ def config(context=None):
 
 
 def _selected_project(context=None):
-    '''The Kitsu project dict the browser is pointed at, or None.
+    '''The Kitsu project a scene belongs to, however it can be found.
+
+    The browser's selection first. Then the project it was last pointed at,
+    and then what was last seen of that project - because a .blend opened
+    from disk in a Blender that has never connected still has renders to
+    place, and the roots live in the project's Kitsu brief. Without the last
+    two the render path is silently not set at all.
 
     Wrapped because this is called from draw code and during registration,
     when the window manager may not carry the browser properties yet.
     '''
+    from .BB_core import projects, settings as core_settings
+
     try:
         from . import properties
-        return session.state.project(properties.get(context).project)
+        found = session.state.project(properties.get(context).project)
+    except Exception:
+        found = None
+    if found is not None:
+        return found
+
+    try:
+        remembered = core_settings.get('last_project')
+        found = session.state.project(remembered) if remembered else None
+    except Exception:
+        found = None
+    if found is not None:
+        return found
+
+    try:
+        return projects.cached()
     except Exception:
         return None
 

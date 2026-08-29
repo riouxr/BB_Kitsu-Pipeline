@@ -380,7 +380,8 @@ def main():
     # that never opened the browser. There is no Kitsu session at all, so
     # nothing that needs the server can answer - and the roots live in the
     # project's brief. What the browser last saw is kept for exactly this.
-    session.remember_project(state.projects[0])
+    from BB_core import projects as core_projects
+    core_projects.remember(state.projects[0])
     kept_client_2 = state.client
     kept_projects_2 = state.projects
     state.client = None
