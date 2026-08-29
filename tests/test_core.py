@@ -8,6 +8,7 @@ add it without wheels.
 """
 
 import ast
+import os
 import re
 import sys
 import tempfile
@@ -18,7 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from BB_core import (brief, filetree, frames, naming,  # noqa: E402
-                       versioning, volumes, workfiles)
+                       projects, settings, versioning, volumes, workfiles)
 from BB_core.config import Config  # noqa: E402
 from BB_core.context import EntityContext  # noqa: E402
 
@@ -1643,6 +1644,139 @@ class TestABriefTypedIntoAWebForm(unittest.TestCase):
 
     def test_no_block_is_still_no_block(self):
         self.assertIsNone(brief.parse("Just a description."))
+
+
+class TestFilesFromBeforeTheRename(unittest.TestCase):
+    r"""A file made before the names were shortened is still identifiable.
+
+    The stamp inside a .blend or .nk carries the context, so a file the
+    pipeline made is fine either way. One that was never stamped has only
+    its name - and under the short scheme a long name parsed to nothing,
+    leaving it with no context, no version and nowhere to render.
+    """
+
+    LONG = "KitsuTest-Project_Prop_knife_Lighting_v002.blend"
+
+    def test_a_long_name_still_parses(self):
+        parsed = naming.parse(self.LONG)
+        self.assertEqual(parsed["entity"], "knife")
+        self.assertEqual(parsed["task"], "Lighting")
+        self.assertEqual(parsed["version"], 2)
+
+    def test_a_short_name_is_unaffected(self):
+        self.assertEqual(naming.parse("knife_v002.blend"),
+                         {"entity": "knife", "version": 2})
+
+    def test_the_path_completes_it(self):
+        found = EntityContext.from_path(
+            "X:/Show/assets/Prop/knife/Lighting/" + self.LONG)
+        self.assertEqual((found.entity_type, found.group, found.entity,
+                          found.task, found.version),
+                         ("asset", "Prop", "knife", "Lighting", 2))
+        self.assertTrue(found.is_complete(),
+                        "and is usable, which is the point")
+
+    def test_still_written_short(self):
+        # Read, never written: a new version does not get the old name back.
+        context = EntityContext(project="KitsuTest-Project", group="Prop",
+                                entity="knife", task="Lighting", version=3)
+        self.assertEqual(context.versioned(), "knife_v003")
+
+
+class TestALegacyNeighbourDoesNotMoveTheVersion(unittest.TestCase):
+    """An old file for another task must not push the next version forward."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def touch(self, name):
+        (self.root / name).write_text("")
+
+    def test_another_task_is_ignored_when_it_can_be_told_apart(self):
+        fields = {"project": "VIL", "group": "FF9", "entity": "0070",
+                  "task": "precomp3d"}
+        self.touch("0070_v001.blend")
+        self.touch("VIL_FF9_0070_lighting_v009.blend")
+        self.assertEqual(versioning.next_version(self.root, fields, "blend"), 2)
+
+    def test_and_ignored_when_it_cannot(self):
+        # Only the entity is known - which is all a short filename carries -
+        # so a name claiming a task cannot be confirmed as ours. Refused
+        # rather than counted: guessing wrong here skips a version number.
+        fields = {"entity": "0070"}
+        self.touch("0070_v001.blend")
+        self.touch("VIL_FF9_0070_lighting_v009.blend")
+        self.assertEqual(versioning.next_version(self.root, fields, "blend"), 2)
+
+    def test_our_own_old_versions_still_count(self):
+        fields = {"project": "VIL", "group": "FF9", "entity": "0070",
+                  "task": "precomp3d"}
+        self.touch("VIL_FF9_0070_precomp3d_v004.blend")
+        self.assertEqual(versioning.next_version(self.root, fields, "blend"), 5)
+
+
+class TestProjectCache(unittest.TestCase):
+    """What a project said about itself, for when the server is not there.
+
+    One slot was not enough. A comper moves between shows, and remembering
+    only the last one meant every other show lost its roots the moment it
+    was not the current one - and worse, a bare lookup handed back whichever
+    project happened to be cached, so one show's brief could supply another
+    show's roots. Those resolve; they are simply wrong, and nothing on
+    screen says so.
+    """
+
+    A = {"id": "pa", "name": "Alpha", "description": '[bb] work_root = "A:/"'}
+    B = {"id": "pb", "name": "Beta", "description": '[bb] work_root = "B:/"'}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._was = os.environ.get("BB_PIPELINE_SETTINGS")
+        os.environ["BB_PIPELINE_SETTINGS"] = str(Path(self._tmp.name) / "s.json")
+
+    def tearDown(self):
+        if self._was is None:
+            os.environ.pop("BB_PIPELINE_SETTINGS", None)
+        else:
+            os.environ["BB_PIPELINE_SETTINGS"] = self._was
+        self._tmp.cleanup()
+
+    def test_each_project_keeps_its_own(self):
+        projects.remember(self.A)
+        projects.remember(self.B)
+        self.assertEqual(projects.cached("pa")["name"], "Alpha")
+        self.assertEqual(projects.cached("pb")["name"], "Beta")
+
+    def test_a_project_never_seen_is_not_guessed(self):
+        projects.remember(self.A)
+        self.assertIsNone(projects.cached("pz"))
+
+    def test_without_an_id_it_follows_the_browser(self):
+        projects.remember(self.A)
+        projects.remember(self.B)
+        settings.save({"last_project": "pa"})
+        self.assertEqual(projects.cached()["name"], "Alpha")
+        settings.save({"last_project": "pb"})
+        self.assertEqual(projects.cached()["name"], "Beta")
+
+    def test_and_answers_nothing_when_the_browser_is_elsewhere(self):
+        projects.remember(self.A)
+        settings.save({"last_project": "pb"})
+        self.assertIsNone(projects.cached())
+
+    def test_a_rename_is_picked_up(self):
+        projects.remember(self.A)
+        projects.remember(dict(self.A, name="Alpha Renamed"))
+        self.assertEqual(projects.cached("pa")["name"], "Alpha Renamed")
+
+    def test_the_single_slot_it_used_to_keep_is_still_read(self):
+        # Written by the first version of this: a flat dict with an id in it.
+        settings.save({"project_cache": dict(self.A)})
+        self.assertEqual(projects.cached("pa")["name"], "Alpha")
 
 
 if __name__ == "__main__":

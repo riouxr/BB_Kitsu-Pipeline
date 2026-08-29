@@ -30,7 +30,6 @@ def existing_versions(directory, fields, ext, config=None):
     if not directory.is_dir():
         return []
 
-    wanted = naming.format_base(fields, config)
     suffix = "." + ext.lstrip(".")
 
     found = []
@@ -40,7 +39,7 @@ def existing_versions(directory, fields, ext, config=None):
         parsed = naming.parse(entry.name, config)
         if not parsed:
             continue
-        if naming.format_base(parsed, config).lower() != wanted.lower():
+        if not naming.names_the_same(parsed, fields, config):
             continue
         found.append((parsed["version"], entry))
 

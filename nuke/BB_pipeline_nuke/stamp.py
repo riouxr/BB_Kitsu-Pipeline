@@ -15,6 +15,11 @@ import os
 KNOB = 'BB_pipeline'
 LABEL = 'Kitsu context'
 
+# Scripts stamped before the add-on was renamed. Read, never written: the
+# ids in one of those knobs are still the right ids, and losing them would
+# drop an old comp back to id-less filename parsing for no reason.
+LEGACY_KNOBS = ('fake_pipeline',)
+
 
 def _root():
     import nuke
@@ -41,13 +46,19 @@ def read():
     from BB_core.context import EntityContext
 
     try:
-        knob = _root().knob(KNOB)
+        root = _root()
     except Exception:
         return None
-    if knob is None:
-        return None
 
-    raw = knob.value()
+    raw = ''
+    for name in (KNOB,) + LEGACY_KNOBS:
+        knob = root.knob(name)
+        if knob is None:
+            continue
+        raw = knob.value()
+        if raw:
+            break
+
     if not raw:
         return None
     try:

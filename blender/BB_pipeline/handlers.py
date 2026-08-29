@@ -9,7 +9,27 @@ no requests at all.
 import bpy
 from bpy.app.handlers import persistent
 
-from . import fetch, properties, scenesync, session, stamp
+from . import fetch, prefs, properties, scenesync, session, stamp
+
+
+def _restore_project_bookmark(context=None):
+    """Put the selector back on the last project deliberately chosen."""
+    state = session.state
+    props = properties.get(context)
+
+    preferences = prefs.get(context)
+    wanted = getattr(preferences, 'last_project', '') if preferences else ''
+    if not wanted or props.project == wanted:
+        return
+
+    if not any(project['id'] == wanted for project in state.projects):
+        return
+
+    with properties.suspend_updates():
+        try:
+            props.project = wanted
+        except TypeError:
+            pass
 
 
 def restore_selection(entity_context, context=None):
@@ -28,6 +48,14 @@ def restore_selection(entity_context, context=None):
     is_asset = entity_context.entity_type == 'asset'
 
     if not any(project['id'] == entity_context.project_id for project in state.projects):
+        # The file cannot say which project it belongs to - it was never
+        # stamped, and the path no longer names one. Loading it has just
+        # reset the selector to the first project in the list, which is a
+        # wrong answer that looks like a real one: everything downstream
+        # then reads that show's brief, finds no roots, and sets no render
+        # path. The bookmark is the last project actually chosen, so it is
+        # a better answer than whatever happens to sort first.
+        _restore_project_bookmark(context)
         return False
 
     groups = state.asset_types if is_asset else state.sequences
@@ -62,6 +90,16 @@ def on_load(_dummy):
     # previous asset's picture against the one now open.
     state.last_render = None
     state.render_restore = None
+
+    # The selectors live on the WindowManager the load has just replaced, so
+    # the project has silently reset to whichever one sorts first. Put the
+    # bookmark back before reading anything: recovering a context from a
+    # filename is done against the project's own naming templates, and the
+    # wrong project supplies the wrong ones - which is how a file sitting in
+    # the middle of the pipeline came to read as being outside it. A stamped
+    # file still overrides this below; the bookmark is only the starting
+    # point, not the answer.
+    _restore_project_bookmark()
 
     entity_context, source = stamp.read_current()
     state.context = entity_context

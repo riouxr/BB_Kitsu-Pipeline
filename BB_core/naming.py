@@ -71,6 +71,11 @@ def base_template(config, entity_type=None):
     return config.naming["base"]
 
 
+# What a stem looked like when it named the whole context. Read, never
+# written: format_base always uses whatever the config asks for.
+LEGACY_BASE = "{project}_{group}_{entity}_{task}"
+
+
 def base_templates(config):
     """Every stem template the config defines, most specific first."""
     seen = []
@@ -150,8 +155,12 @@ def parse(name, config=None):
     stem = re.sub(r"\.\d+$", "", stem)
 
     # Every stem template gets a try. A config that names shots and assets
-    # differently has two, and a name only has to match one of them.
-    for template in base_templates(config):
+    # differently has two, and a name only has to match one of them. The
+    # scheme that spelled the whole context out comes last, so a file made
+    # before the names were shortened can still be read - it is the only
+    # thing identifying one that was never stamped, and without it such a
+    # file has no context, no version and nowhere to render.
+    for template in list(base_templates(config)) + [LEGACY_BASE]:
         match = _parse_pattern(config, template).match(stem)
         if match:
             parsed = match.groupdict()
@@ -159,3 +168,31 @@ def parse(name, config=None):
             return parsed
 
     return None
+
+
+def names_the_same(parsed, fields, config=None):
+    """True when a parsed name refers to the same entity and task as *fields*.
+
+    Compared on the fields the parsed name actually carries, not on the
+    template in force. A name written under the old scheme spells out the
+    project, group and task, and those have to be honoured or a lighting
+    file sitting in a comp folder would be mistaken for a comp version - the
+    short scheme names only the entity, and would see them as equal.
+    """
+    config = config or Config()
+    for key in ("project", "group", "entity", "task"):
+        theirs = (parsed or {}).get(key)
+        if not theirs:
+            continue
+
+        ours = (fields or {}).get(key)
+        if not ours:
+            # The name claims something the reference cannot speak to - an
+            # old file naming a task, checked against a short name that
+            # carries only an entity. Refused rather than assumed equal: an
+            # unrecognised neighbour must not push the version forward.
+            return False
+
+        if sanitize(str(theirs), config).lower() != sanitize(str(ours), config).lower():
+            return False
+    return bool((parsed or {}).get("entity"))

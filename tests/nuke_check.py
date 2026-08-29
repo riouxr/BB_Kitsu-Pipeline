@@ -403,6 +403,23 @@ def main():
         state.client = kept_client_2
         state.projects = kept_projects_2
 
+    # Never a third project. A lookup that falls back past the one asked
+    # for and past the browser's, onto whatever happens to be cached, gives
+    # roots that resolve and are simply wrong - the quietest failure there
+    # is, and the one a rename made visible.
+    core_projects.remember({"id": "other", "name": "SomeOtherShow",
+                            "description": '[bb] work_root = "Z:/Wrong"'})
+    settings.save({"last_project": "p1"})
+
+    asked = session.project_of(_Ctx(group="sc01", entity="sh01",
+                                    task="Compositing", entity_type="shot",
+                                    version=1, project_id="notcached"))
+    check(asked is None or asked.get("id") in ("notcached", "p1"),
+          "an uncached id falls back to the browser, not to a stranger (%s)"
+          % (asked or {}).get("name"))
+    check((asked or {}).get("name") != "SomeOtherShow",
+          "and never to the last project that happened to be cached")
+
     # An id that answers nothing is worth no more than no id. A stamp
     # written against another server, or a project since deleted, otherwise
     # tells a comper who plainly has a project open that there is none.
@@ -1014,6 +1031,22 @@ def main():
           "and the rendered frames are found through it (%d)" % len(through_pattern))
     check(through_evaluated == [],
           "where the evaluated path finds nothing, which was the bug")
+
+    # -- scripts stamped before the add-on was renamed ------------------------
+    import json as _json
+    nuke_stub = sys.modules["nuke"]
+    nuke_stub._root.knobs.pop("BB_pipeline", None)
+    legacy = StubKnob("fake_pipeline")
+    legacy.setValue(_json.dumps({"entity_type": "shot", "project": "Old Name",
+                                 "group": "sc01", "entity": "sh03",
+                                 "task": "Compositing", "entity_id": "e9",
+                                 "task_id": "t9", "version": 2}))
+    nuke_stub._root.knobs["fake_pipeline"] = legacy
+    from_legacy = stamp.read()
+    check(from_legacy is not None, "a FAKE-era stamp is still readable")
+    check(from_legacy is not None and from_legacy.entity_id == "e9",
+          "and it keeps the Kitsu ids a filename could never carry")
+    nuke_stub._root.knobs.pop("fake_pipeline", None)
 
     # -- the menu -------------------------------------------------------------
     check(package.MENU == "Kitsu", "the menu is called Kitsu")

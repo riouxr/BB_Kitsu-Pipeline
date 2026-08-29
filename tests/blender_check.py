@@ -714,6 +714,60 @@ def main():
             with properties.suspend_updates():
                 props_asset.entity_type = "SHOT"
 
+        # -- a load must not leave the selector on the wrong project ---------
+        # Opening a file replaces the WindowManager, and the project enum
+        # comes back pointing at whichever project sorts first - a wrong
+        # answer that looks like a real one. Everything downstream then
+        # reads that show's brief, finds no roots, and sets no render path.
+        from BB_pipeline import handlers as bb_handlers
+        from BB_pipeline import prefs as bookmark_prefs
+        from BB_core.context import EntityContext as _Ctx
+
+        other = {"id": "pOther", "name": "AAA Other Show", "code": None,
+                 "fps": "24"}
+        kept_projects_2 = session.state.projects
+        session.state.projects = [other] + list(session.state.projects)
+        try:
+            preferences.last_project = PROJECT["id"]
+            with properties.suspend_updates():
+                properties.get().project = "pOther"
+
+            # A context with no project id, the way an unstamped file gives.
+            nameless = _Ctx(group="FF9", entity="0070", task="precomp3d",
+                            entity_type="shot", version=1)
+            bb_handlers.restore_selection(nameless)
+
+            check(properties.get().project == PROJECT["id"],
+                  "a file that cannot name its project falls back to the "
+                  "bookmark (%s)" % properties.get().project)
+            check((bookmark_prefs._selected_project() or {}).get("id") == PROJECT["id"],
+                  "so the roots come from the right show")
+
+            # ...and the same thing when the file yields no context at all.
+            # on_load used to read the context first and return early when
+            # there was none, so it never reached the fallback above. That
+            # was circular: parsing an unstamped filename is done against
+            # the project's own templates, so it needed the project it was
+            # only going to restore once the parse had succeeded. The whole
+            # menu then read "outside the pipeline" and no render path was
+            # set - for a file sitting in the middle of the pipeline.
+            from BB_pipeline import stamp as bb_stamp
+
+            with properties.suspend_updates():
+                properties.get().project = "pOther"
+            kept_read = bb_stamp.read_current
+            bb_stamp.read_current = lambda: (None, '')
+            try:
+                bb_handlers.on_load(None)
+            finally:
+                bb_stamp.read_current = kept_read
+
+            check(properties.get().project == PROJECT["id"],
+                  "opening a file that says nothing at all still comes back "
+                  "to the bookmarked project (%s)" % properties.get().project)
+        finally:
+            session.state.projects = kept_projects_2
+
         # -- a render belongs to the file it came out of ---------------------
         # Opening another asset used to leave the previous render standing,
         # still offered for publishing - and it published the previous

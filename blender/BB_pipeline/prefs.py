@@ -471,6 +471,17 @@ def remember(context=None):
         if value and value != 'NONE':
             setattr(preferences, 'last_' + name, value)
 
+    # Written through to the settings file as well, so the project cache and
+    # the Nuke side are looking at the same show as this one.
+    chosen = getattr(props, 'project', '')
+    if chosen and chosen != 'NONE':
+        try:
+            from .BB_core import settings as core_settings
+            if core_settings.get('last_project') != chosen:
+                core_settings.save({'last_project': chosen})
+        except Exception:
+            pass
+
 
 def recall(context=None):
     """What the browser was last pointed at."""
@@ -581,13 +592,35 @@ def _selected_project(context=None):
     if found is not None:
         return found
 
+    # The add-on's own bookmark next. This is where Blender keeps the last
+    # project - the settings file is Nuke's - and reading only the latter
+    # meant the fallback looked at a value Blender never writes, so a file
+    # with no stamp had no project at all once the load wiped the
+    # selectors.
+    remembered = ''
     try:
-        remembered = core_settings.get('last_project')
-        found = session.state.project(remembered) if remembered else None
+        preferences = get(context)
+        remembered = getattr(preferences, 'last_project', '') or ''
     except Exception:
-        found = None
-    if found is not None:
-        return found
+        remembered = ''
+
+    if not remembered:
+        try:
+            remembered = core_settings.get('last_project') or ''
+        except Exception:
+            remembered = ''
+
+    if remembered:
+        try:
+            found = session.state.project(remembered)
+        except Exception:
+            found = None
+        if found is not None:
+            return found
+        try:
+            return projects.cached(remembered)
+        except Exception:
+            return None
 
     try:
         return projects.cached()

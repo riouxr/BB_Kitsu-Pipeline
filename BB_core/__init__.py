@@ -15,7 +15,7 @@ from .config import Config, load
 from .context import ShotContext
 from .kitsu import AuthError, KitsuClient, KitsuError
 
-__version__ = "1.0.1"
+__version__ = "1.0.7"
 
 __all__ = [
     "Config",

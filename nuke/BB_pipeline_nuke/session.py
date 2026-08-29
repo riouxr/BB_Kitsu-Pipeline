@@ -150,22 +150,22 @@ def project_of(entity_context=None, project_id=None):
     if project_id is None and entity_context is not None:
         project_id = entity_context.project_id
 
-    found = _project_for(project_id) if project_id else None
-    if found is not None:
-        return found
+    from BB_core import projects
 
-    remembered = _settings.get('last_project')
-    if remembered and remembered != project_id:
-        found = _project_for(remembered)
+    # Two candidates only, and each is tried both live and from the cache
+    # before the next is considered: the project the context names, then the
+    # one the browser is pointed at. Never a third - a lookup that answers
+    # with some other show's brief resolves to roots that are simply wrong,
+    # and nothing on screen says so.
+    if project_id:
+        found = _project_for(project_id) or projects.cached(project_id)
         if found is not None:
             return found
 
-    # Last: what the browser saw the last time it loaded a project. A Write
-    # made from the Nodes menu in a Nuke that has not opened the browser has
-    # no Kitsu session at all, and nothing above can answer without one.
-    from BB_core import projects
-
-    return projects.cached(project_id) or projects.cached()
+    remembered = _settings.get('last_project')
+    if remembered and remembered != project_id:
+        return _project_for(remembered) or projects.cached(remembered)
+    return None
 
 
 def _project_for(project_id):

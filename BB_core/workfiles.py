@@ -268,14 +268,14 @@ def render_versions(context, stream="main", config=None):
     if not folder.is_dir():
         return []
 
-    wanted = naming.format_base(context.as_fields(), config)
+    fields = context.as_fields()
     ext = config.streams[stream].get("ext", "exr")
 
     found = []
     for entry in sorted(folder.iterdir()):
         if not entry.is_dir():
             continue
-        version = _version_folder(entry.name, wanted, config)
+        version = _version_folder(entry.name, fields, config)
         if version is None:
             continue
         frames = sorted(entry.glob("*.%s" % ext))
@@ -288,7 +288,7 @@ def render_versions(context, stream="main", config=None):
     return sorted(found)
 
 
-def _version_folder(name, wanted, config):
+def _version_folder(name, fields, config):
     """The version a render folder holds, or None if it holds none.
 
     Two shapes are accepted. The current one is just ``v003``: the folders
@@ -303,7 +303,7 @@ def _version_folder(name, wanted, config):
 
     parsed = naming.parse(name, config)
     if parsed and parsed.get("version") is not None:
-        if naming.format_base(parsed, config).lower() == wanted.lower():
+        if naming.names_the_same(parsed, fields, config):
             return parsed["version"]
         return None
 
