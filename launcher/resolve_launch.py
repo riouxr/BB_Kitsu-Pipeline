@@ -103,3 +103,29 @@ def open_project(name):
     pm = resolve_ops.get_project_manager()
     if not pm.LoadProject(name):
         raise RuntimeError("Resolve could not open %r" % name)
+
+
+def create_project(context):
+    """Creates this task's first Resolve project (v001) and opens it.
+
+    Reuses the same naming (``build_project_base``) and next-version rule
+    (``next_version_name``) the Resolve-side UI already versions its own
+    projects with, rather than inventing a second numbering scheme.
+    ``CreateProject`` both creates and loads the project as Resolve's
+    current one - there is no separate "open" step the way a freshly
+    written file needs one.
+
+    Returns ``(version, name)``. Raises RuntimeError on failure - most
+    plausibly a name collision with a project this task's own version
+    history does not know about, since the name is otherwise guaranteed
+    fresh (`next_version_name` only offers a name nothing existing matches).
+    """
+    base = resolve_ops.build_project_base(
+        context.project, context.group, context.entity, context.task)
+    name, version = resolve_ops.next_version_name(
+        base, resolve_ops.get_all_resolve_project_names())
+
+    pm = resolve_ops.get_project_manager()
+    if not pm.CreateProject(name):
+        raise RuntimeError("Resolve could not create %r" % name)
+    return version, name

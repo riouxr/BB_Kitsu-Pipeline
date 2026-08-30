@@ -199,9 +199,30 @@ created file between runs): both times the HTTP call returned in under a
 second, and Nuke came up seconds later with the correct file already
 loaded, confirmed by screenshot rather than assumed from a 200 response.
 
-Resolve is architecturally simpler for this than either
-(`ProjectManager.CreateProject(name)`, no file involved at all), but has not
-been wired in.
+### Resolve: also done - simpler than either, once actually wired in
+
+Found missing by the user trying it against an empty Color Grading task:
+Resolve launched (the cold-start path from the earlier fix), but then
+stopped at the Project Manager screen instead of opening anything, because
+`open_version()` never had a create branch for Resolve at all - it fell
+straight to the same "no work yet" error the file-based DCCs give, which
+here meant the artist was left looking at a project list with nothing
+selected rather than an error message they could act on.
+
+Architecturally the simplest of the three: `resolve_ops.next_version_name`
+already computes the right first name from the same naming/versioning rules
+the Resolve UI itself uses, and `ProjectManager.CreateProject(name)` both
+creates the project and loads it as current in one call - no separate
+"open" step the way a freshly written file needs one, and no throwaway
+background mode to reason about either, unlike both of the other two.
+
+Verified cold, for real - Resolve closed beforehand, so this exercised the
+create path and the earlier cold-start fix together in one request: the
+`/launch` call took ~40s (Resolve booting from nothing), came back
+successful, and a screenshot confirmed Resolve had come up directly on the
+new project's Edit page - not the Project Manager splash the user had been
+stuck on - with `GetCurrentProject()` independently confirming the same
+name back.
 
 ## Files in this folder
 

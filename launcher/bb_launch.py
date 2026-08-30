@@ -192,8 +192,8 @@ def open_version(context, config, dcc, wanted_version=None):
                 % (wanted_version, context.group, context.entity, context.task,
                    ", ".join("v%03d" % v for v, _identifier in versions) or "none"))
     elif not versions and dcc == "blender":
-        # Blender is one of two DCCs where "nothing exists yet" doesn't have
-        # to be a dead end: a fresh startup scene is a real, useful first
+        # Blender is one of three DCCs where "nothing exists yet" doesn't
+        # have to be a dead end: a fresh startup scene is a real, useful first
         # version, so Launch creates and stamps it (the same logic
         # `bpy.ops.bb.new_workfile` uses, see blender_create_bg.py) rather
         # than sending the artist to do it by hand first. Blender's creation
@@ -217,6 +217,15 @@ def open_version(context, config, dcc, wanted_version=None):
         except RuntimeError as error:
             raise KitsuError(str(error))
         return version, path
+    elif not versions and dcc == "resolve":
+        # Resolve's `CreateProject` both creates and loads the project as
+        # Resolve's current one, so - like Nuke just above - there is
+        # nothing further to open once this returns.
+        try:
+            version, name = resolve_launch.create_project(context)
+        except RuntimeError as error:
+            raise KitsuError(str(error))
+        return version, name
     else:
         if not versions:
             raise KitsuError(
