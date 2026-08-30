@@ -1,0 +1,158 @@
+diff --git a/src/components/sides/TaskInfo.vue b/src/components/sides/TaskInfo.vue
+index 766808af2..f6e5f387a 100644
+--- a/src/components/sides/TaskInfo.vue
++++ b/src/components/sides/TaskInfo.vue
+@@ -130,6 +130,15 @@
+                     @update:model-value="onPreviewChanged"
+                   />
+                 </div>
++                <button
++                  class="button flexrow-item launch-button"
++                  :title="launchHint"
++                  @click="onLaunchClicked"
++                  v-if="!isCurrentUserClient"
++                >
++                  <play-icon class="icon is-small" />
++                  {{ $t('tasks.launch') }}
++                </button>
+                 <div class="filler"></div>
+                 <div>
+                   <router-link
+@@ -378,7 +387,7 @@
+ 
+ <script setup>
+ // Imports
+-import { CornerRightUpIcon, XIcon } from 'lucide-vue-next'
++import { CornerRightUpIcon, PlayIcon, XIcon } from 'lucide-vue-next'
+ import moment from 'moment'
+ import {
+   computed,
+@@ -403,6 +412,7 @@ import csv from '@/lib/csv'
+ import { isSupervisorInDepartments } from '@/lib/descriptors'
+ import drafts from '@/lib/drafts'
+ import func from '@/lib/func'
++import { launchTask, parseVersionTag } from '@/lib/launcher'
+ import {
+   getDownloadAttachmentPath,
+   getTaskEntityPath,
+@@ -798,6 +808,34 @@ const currentRevision = computed(
+     props.currentParentPreview?.revision || currentPreview.value?.revision || 0
+ )
+ 
++// revision -> local scene version, read back from each publish comment's
++// tag (BB_core.versioning.tag_comment). A revision whose comment predates
++// this feature, or was published from a studio not running this build yet,
++// has no entry - Launch falls back to the latest local version for those.
++const revisionVersionMap = computed(() => {
++  const map = new Map()
++  for (const comment of taskComments.value) {
++    const version = parseVersionTag(comment.text)
++    if (version == null) continue
++    for (const preview of comment.previews || []) {
++      map.set(preview.revision, version)
++    }
++  }
++  return map
++})
++
++const launchVersion = computed(() => revisionVersionMap.value.get(currentRevision.value))
++
++const launchHint = computed(() =>
++  launchVersion.value
++    ? t('tasks.launch_hint_known', { version: launchVersion.value })
++    : t('tasks.launch_hint_latest')
++)
++
++const onLaunchClicked = () => {
++  launchTask(props.task.id, launchVersion.value)
++}
++
+ const displayedFrame = computed(
+   () => props.currentFrame || currentFrameRaw.value
+ )
+@@ -835,11 +873,17 @@ const previewOptions = computed(() => {
+   if (!taskPreviews.value) return []
+   return [...taskPreviews.value]
+     .sort((a, b) => b.revision - a.revision)
+-    .map(preview => ({
+-      value: preview.id,
+-      label: formatRevision(preview.revision, currentProduction.value),
+-      validation_status: preview.validation_status
+-    }))
++    .map(preview => {
++      const version = revisionVersionMap.value.get(preview.revision)
++      return {
++        value: preview.id,
++        label: version
++          ? t('tasks.preview_option_with_version',
++              { revision: preview.revision, version })
++          : formatRevision(preview.revision, currentProduction.value),
++        validation_status: preview.validation_status
++      }
++    })
+ })
+ 
+ const selectedTasksToDisplay = computed(() =>
+diff --git a/src/lib/launcher.js b/src/lib/launcher.js
+new file mode 100644
+index 000000000..92f512e44
+--- /dev/null
++++ b/src/lib/launcher.js
+@@ -0,0 +1,42 @@
++// Opens a task's work file in its DCC via a tiny localhost HTTP server (see
++// BB_Kitsu-Pipeline/launcher/bb_launch_server.py). Not a `bbkitsu://`-style
++// custom protocol - that route was tried first, and Chrome's handling of
++// custom protocol handlers turned out too unreliable to build on: neither a
++// Default Programs registration, a dedicated compiled exe, nor a real
++// `<a href>` got a real Chrome install past "the scheme does not have a
++// registered handler," with no difference found against a byte-for-byte
++// comparison to a definitely-working third-party registration. An ordinary
++// request to 127.0.0.1 sidesteps all of that - it is not a protocol handoff,
++// so none of those restrictions apply.
++const SERVER = 'http://127.0.0.1:53212'
++
++// Mirrors BB_core.versioning.format_version_tag/parse_version_tag - kept in
++// sync by hand rather than fetched from the server, since it is a plain
++// string format, not behaviour worth a round trip to ask for. Every
++// Blender/Nuke publish appends this to its Kitsu comment (BB_core.
++// versioning.tag_comment), which is the only durable link between a Kitsu
++// preview revision and the local scene version that produced it - Kitsu's
++// own revision counter advances on every publish, while a scene is only
++// saved when something changes worth a version bump, so the two drift apart
++// under completely normal use (several published angles off one saved
++// scene). A comment predating this feature, or one from a studio not
++// running this build yet, simply has no tag: treat that as "unknown," not
++// as version 0.
++const VERSION_TAG = /\[\[v(\d+)\]\]/
++
++export const parseVersionTag = text => {
++  const match = VERSION_TAG.exec(text || '')
++  return match ? parseInt(match[1], 10) : null
++}
++
++// `version` is a *local* work-file version - from parseVersionTag above, or
++// omitted to open the latest. Never Kitsu's bare revision number.
++export const launchTask = (taskId, version) => {
++  if (!taskId) return
++  const params = new URLSearchParams({ task_id: taskId })
++  if (version) params.set('version', version)
++  // fire-and-forget: the server has nothing useful to hand back beyond
++  // pass/fail, and a failed fetch (server not running) shouldn't throw in
++  // the caller's click handler.
++  fetch(`${SERVER}/launch?${params}`).catch(() => {})
++}
+diff --git a/src/locales/en.js b/src/locales/en.js
+index af3c50b87..7fc58cf78 100644
+--- a/src/locales/en.js
++++ b/src/locales/en.js
+@@ -2037,6 +2037,10 @@ export default {
+     comment_image: 'Attach files',
+     create_for_selection: 'Create a task for each empty cell',
+     create_tasks: 'Add tasks',
++    launch: 'Launch',
++    launch_hint_known: 'Open v{version}, the work file behind this image, in its DCC',
++    launch_hint_latest: 'Open the latest work file in its DCC (no local version known for this image)',
++    preview_option_with_version: 'Image {revision} from v{version}',
+     create_tasks_all_missing: 'Add all missing ({count})',
+     create_tasks_all_missing_empty: 'Add all missing',
+     create_tasks_disclaimer: 'If your task type is missing, verify it is listed in the Task Types section of the production settings.',

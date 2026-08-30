@@ -12,6 +12,41 @@ from . import naming
 from .config import Config
 
 
+# A marker appended to every publish comment, so a later "open the scene
+# behind this picture" can recover the answer. Kitsu's own preview revision
+# counts publishes, not saves - several published angles off one saved scene
+# is a revision bump with no matching version bump - so the two numbers
+# drift apart under completely normal use, and nothing else on a comment
+# reliably ties it back to a local file: the comment text itself is what an
+# artist writes their actual note into, and gets overwritten immediately.
+# Double brackets and a fixed `v` prefix keep this unlikely to collide with
+# an artist's own text mentioning a version in passing.
+_VERSION_TAG = re.compile(r"\[\[v(\d+)\]\]")
+
+
+def format_version_tag(version):
+    """The marker for one version, e.g. ``"[[v003]]"``."""
+    return "[[v%03d]]" % int(version)
+
+
+def parse_version_tag(text):
+    """The version out of a comment carrying a marker, or None without one."""
+    match = _VERSION_TAG.search(text or "")
+    return int(match.group(1)) if match else None
+
+
+def tag_comment(comment, version):
+    """*comment* with its version marker appended.
+
+    Replaces a marker already there rather than stacking a second one, so
+    retagging (should that ever happen) cannot leave two conflicting markers
+    for a parser to pick between.
+    """
+    base = _VERSION_TAG.sub("", comment or "").rstrip()
+    tag = format_version_tag(version)
+    return "%s\n\n%s" % (base, tag) if base else tag
+
+
 def version_from_name(name, config=None):
     """The version encoded in a filename, or None if it carries no context."""
     parsed = naming.parse(name, config or Config())

@@ -21,6 +21,8 @@ import tempfile
 
 import bpy
 
+from .BB_core.versioning import tag_comment
+
 from . import prefs, session
 
 # Frames written by the pipeline are <stem>.<frame>.<ext>.
@@ -331,7 +333,9 @@ def submit(context, comment='', task_status_id=None):
 
     client = state.client
     task_id = entity_context.task_id
-    text = comment or ('%s rendered from Blender' % last_render.get('stem'))
+    text = tag_comment(
+        comment or ('%s rendered from Blender' % last_render.get('stem')),
+        entity_context.version)
 
     # What actually went up, not what was rendered: asking for one image out
     # of a sequence publishes a look, and a look should not burn a version.

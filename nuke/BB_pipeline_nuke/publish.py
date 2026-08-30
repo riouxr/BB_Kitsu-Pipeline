@@ -11,6 +11,7 @@ import os
 
 from BB_core import settings
 from BB_core.kitsu import KitsuError
+from BB_core.versioning import tag_comment
 
 from . import session
 
@@ -48,7 +49,7 @@ def send(entity_context, path, comment='', task_status_id=None, preview=None):
         return blocked
 
     client = state.client
-    text = comment or default_comment(path)
+    text = tag_comment(comment or default_comment(path), entity_context.version)
 
     try:
         if preview:

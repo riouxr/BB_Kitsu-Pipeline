@@ -14,6 +14,8 @@ is not always fast and a save must never block on the network: the file is
 already on disk by the time this starts, so a failed publish costs a comment,
 never work.
 '''
+from .BB_core.versioning import tag_comment
+
 from . import capture, prefs, session
 
 
@@ -56,7 +58,7 @@ def send(context, entity_context, path, comment='', task_status_id=None):
 
     client = state.client
     task_id = entity_context.task_id
-    comment = comment or default_comment(path)
+    comment = tag_comment(comment or default_comment(path), entity_context.version)
 
     preview = None
     if preferences.preview_on_save:

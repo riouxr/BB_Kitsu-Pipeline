@@ -9,6 +9,14 @@ dist/
 # Local, machine-specific pipeline config - the defaults are in
 # BB_core/presets/default.toml and those are the ones that get committed.
 config.toml
+
+# Compiled by launcher/install.py; bakes in this machine's Python path.
+launcher/bb_launch.exe
+
+# A full clone of cgwire/kitsu, patched locally to add the Launch button -
+# see launcher/README.md. The patch against upstream is what's tracked
+# (launcher/kitsu-frontend.patch), not this multi-hundred-MB working copy.
+launcher/kitsu-frontend/
 .venv/
 venv/
 
