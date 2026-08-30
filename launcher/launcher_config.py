@@ -19,6 +19,7 @@ FILE = FOLDER / "launcher.json"
 DEFAULTS = {
     "blender_exe": "",
     "nuke_exe": "",
+    "resolve_exe": "",
 }
 
 

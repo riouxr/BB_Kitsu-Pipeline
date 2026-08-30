@@ -1,18 +1,20 @@
-"""Switch which installed Blender/Nuke build the launcher opens scenes with.
+"""Switch which installed Blender/Nuke/Resolve build the launcher uses.
 
 The launcher itself always opens the *latest saved version* of the scene -
 that part is not a choice. This is about the other version: which build of
 the DCC does the opening, out of however many are installed side by side.
 
-    python dcc_versions.py list              # every Blender/Nuke found on this machine
+    python dcc_versions.py list              # every install found on this machine
     python dcc_versions.py list blender      # just one dcc
     python dcc_versions.py set blender 5.1   # match by a substring of the path
     python dcc_versions.py current           # what bb_launch.py will use right now
 
-Search paths are Windows-only and cover where these two install by default;
+Search paths are Windows-only and cover where these install by default;
 nothing here touches the registry or asks Windows what is installed, so an
 install in a nonstandard location has to be set with an explicit full path
-instead of a version substring.
+instead of a version substring. Resolve does not version its install path
+the way Blender/Nuke do (one "DaVinci Resolve" folder, upgraded in place),
+so there is only ever one candidate to find.
 """
 import sys
 from pathlib import Path
@@ -28,9 +30,12 @@ _SEARCH = {
     "nuke": [
         (Path(r"C:\Program Files"), "Nuke*/Nuke*.exe"),
     ],
+    "resolve": [
+        (Path(r"C:\Program Files\Blackmagic Design"), "DaVinci Resolve/Resolve.exe"),
+    ],
 }
 
-_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe"}
+_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe"}
 
 
 def found(dcc):

@@ -1,14 +1,17 @@
 # Launch from Kitsu
 
 A **Launch** button in the Kitsu web UI's task panel that opens a task's
-work file directly in Blender (Nuke next) on the artist's own machine, the
-way ftrack Connect's software-launch buttons work.
+work directly on the artist's own machine - Blender, Nuke or DaVinci
+Resolve, whichever the task's department calls for - the way ftrack
+Connect's software-launch buttons work.
 
-Status: **Blender and Nuke both confirmed working end-to-end** - resolution,
-version tagging/labelling, and Launch itself, against real tasks with real
-local `.blend`/`.nk` files on the Kitsu test server. See
-[Nuke verification](#nuke-verification) for exactly what was checked and
-how, since it was done unattended and is worth a skim before trusting it.
+Status: **Blender, Nuke and Resolve all confirmed working end-to-end** -
+resolution, version tagging/labelling, and Launch itself, against real
+tasks with real local `.blend`/`.nk` files and real Resolve projects on the
+Kitsu test server. See [Nuke verification](#nuke-verification) and
+[Resolve verification](#resolve-verification) for exactly what was checked
+and how - both passes were done unattended overnight, and are worth a skim
+before trusting them.
 
 ## Why it works the way it does, not the obvious way
 
@@ -72,9 +75,15 @@ someone specifically wants a terminal-launchable URL.
    And one place in Nuke:
    - `nuke/BB_pipeline_nuke/publish.py`.
 
-   Resolve was **not** touched - its `upload()` publishes a render against
-   a task with a caller-supplied comment, not a work-file save, and does not
-   share the same version concept. Revisit if Resolve ever needs this.
+   And one place in Resolve, added the same night Resolve support went in
+   (below) once it was clear the exact same drift applies there - a
+   colourist can publish several stills off one project version exactly as
+   easily as a 3D artist can publish several angles off one saved scene:
+   - `resolve/BB_pipeline_resolve/publish.py`'s `upload()` - reads the
+     version off the *currently loaded* Resolve project's own name
+     (`resolve_ops.version_from_name`), since `upload()` gets a bare `task`
+     dict from its caller, not an `EntityContext` carrying a version the
+     way the Blender/Nuke call sites do.
 
 2. **The Kitsu frontend** (`launcher/kitsu-frontend.patch`, applied to a
    clone of `cgwire/kitsu`) reads each task's comment history (already
@@ -93,20 +102,41 @@ someone specifically wants a terminal-launchable URL.
 
 3. **`bb_launch_server.py`**, running on the artist's own machine, resolves
    the task (department → DCC, from `BB_core/presets/default.toml`'s
-   `[dcc.blender]`/`[dcc.nuke]` lists, matched against whatever department
-   Kitsu itself has the task type filed under), finds the requested local
-   scene version (or the latest) via `BB_core.versioning`, and
-   `subprocess.Popen`s the configured DCC executable on it. The actual
-   resolve/launch logic lives in `bb_launch.py` and is imported directly,
-   not duplicated.
+   `[dcc.blender]`/`[dcc.nuke]`/`[dcc.resolve]` lists, matched against
+   whatever department Kitsu itself has the task type filed under), then
+   asks `bb_launch.py`'s `open_version()` to open the requested version (or
+   the latest) - which branches into one of two completely different
+   mechanisms depending on the DCC, see below.
+
+### Two launch mechanisms, not one
+
+Blender and Nuke share one mechanism: a version is a file on disk
+(`BB_core.workfiles`/`versioning`), and opening it is
+`subprocess.Popen([exe, path])`.
+
+**Resolve does not fit that model at all.** A Resolve project lives inside
+Resolve's own project database, addressed by name
+(`Project_Sequence_Shot_Task_vNNN`, built by
+`resolve_ops.build_project_base` - the same naming rule the existing Resolve
+UI already uses, reused rather than re-derived), and a new version is a
+newly-imported project, not a new file next to the old one. Opening one
+means Resolve has to already be reachable through its own scripting API
+(`resolve_launch.py`, connecting the same way
+`resolve/BB_pipeline_resolve/resolve_ops.py` does for the Resolve-side UI),
+then `ProjectManager.LoadProject(name)` - there is no file path involved at
+any point. `bb_launch.py`'s `list_versions()`/`open_version()` hide this
+branch behind one shared shape (`(version, identifier)` - a `Path` or a
+project name) so `bb_launch_server.py` and the CLI do not need to know which
+kind of DCC they are talking to.
 
 ## Files in this folder
 
 | File | Role |
 |---|---|
-| `bb_launch.py` | Core resolve + launch logic. Also a CLI: `python bb_launch.py <task_id>`. |
+| `bb_launch.py` | Core resolve + launch logic - `list_versions()`/`open_version()` branch between the file-based and Resolve mechanisms. Also a CLI: `python bb_launch.py <task_id>`. |
 | `bb_launch_server.py` | **What the browser button actually calls.** `GET /launch?task_id=...&version=...` and `GET /versions?task_id=...`, on `127.0.0.1:53212`. Must be running - see [Running the server](#running-the-server-not-yet-automatic). |
-| `launcher_config.py` | `blender_exe`/`nuke_exe` paths, in their own file (`~/.BB_pipeline/launcher.json`) - see [Why a separate config file](#why-a-separate-config-file). |
+| `resolve_launch.py` | Resolve-only half of the launch logic: connecting to Resolve's scripting API, listing/opening projects by name. Kept separate from `bb_launch.py` because none of it applies to the file-based DCCs. |
+| `launcher_config.py` | `blender_exe`/`nuke_exe`/`resolve_exe` paths, in their own file (`~/.BB_pipeline/launcher.json`) - see [Why a separate config file](#why-a-separate-config-file). |
 | `dcc_versions.py` | CLI to list/set which installed DCC build to launch: `python dcc_versions.py list`, `set blender 5.1`, `current`. |
 | `install.py` | Registers `bbkitsu://` (terminal/Run-dialog use only - see above). `--remove` undoes it. |
 | `kitsu-frontend.patch` | The diff against upstream `cgwire/kitsu`, pinned at commit `f398fec6e8b011f65f31a916e994cb5a2fa96536` (`v1.0.58`). The actual clone is gitignored - multiple hundred MB, and irrelevant once built. |
@@ -121,7 +151,8 @@ tracing every `settings.save()`/`settings.set()` call in the Blender
 add-on - three separate times, across one evening. Moving them to their own
 file with exactly one writer (`launcher_config.py`) ended the problem outright
 rather than continuing to chase it. Nothing else should ever read or write
-`~/.BB_pipeline/launcher.json`.
+`~/.BB_pipeline/launcher.json`. `resolve_exe`, added later the same night,
+went straight there and never touched the shared file at all.
 
 ## Running the server (not yet automatic)
 
@@ -205,7 +236,7 @@ get a login shell that has it.
 
 1. Clone this repo.
 2. `python dcc_versions.py set blender <version or full path>` (and `nuke`,
-   once that side is tested).
+   `resolve`).
 3. `pythonw bb_launch_server.py`, kept running (see
    [Running the server](#running-the-server-not-yet-automatic) - no
    auto-start yet on any machine).
@@ -263,3 +294,66 @@ server (`KitsuTest Project`, sequence `sc01`, shot `sh01`, task
   than copying anything, so every fix here was live for a real Nuke session
   with no sync step - one fewer thing to get wrong than the Blender side
   had.
+
+## Resolve verification
+
+Added and checked the same night as the Nuke pass, after the user pointed
+out Color Grading tasks only ever go to Resolve. Unlike Nuke, **Resolve was
+already running** (with real, pre-existing colourist projects in its
+database) when this started, which made a genuinely stronger check
+possible: the real `resolve/BB_pipeline_resolve/publish.py` `upload()`
+function was called directly - not a hand-built simulation of what it does,
+the actual function a click of Resolve's own Publish button calls - and
+Resolve's *own live state* was read back afterward to confirm each launch,
+not just trusted from an HTTP 200. Against a real Color Grading task on
+`sc01/sh01` with two real projects already in Resolve's database
+(`KitsuTest-Project_sc01_sh01_Color-Grading_v001`/`_v002`):
+
+1. **DCC resolution** - `GET /versions?task_id=...` correctly resolved
+   `Color Grading` to `resolve` and listed both existing project versions -
+   reading Resolve's own project database
+   (`resolve_ops.get_all_resolve_project_names()`), not a folder on disk;
+   see [Two launch mechanisms](#two-launch-mechanisms-not-one) for why that
+   is a genuinely different code path from Blender/Nuke, not just a
+   different file extension.
+2. **Launch** - `GET /launch?task_id=...&version=1`, then `&version=2`, then
+   no version at all - each one actually switched Resolve's live current
+   project (`ProjectManager.LoadProject`), independently confirmed after
+   each call by reading `GetCurrentProject().GetName()` back from Resolve
+   itself. The no-version call correctly defaulted to the latest (`v002`).
+   A deliberately wrong version (`v099`) came back with a clean list of
+   what actually exists instead of a crash.
+3. **Tagging round-trip, through the real function** - called
+   `resolve.BB_pipeline_resolve.publish.upload()` itself (not
+   `tag_comment` directly, the way the Nuke check had to) with Resolve's
+   actual current project loaded (`v002`), and confirmed the posted
+   comment came back as `"...\n\n[[v002]]"` - `upload()` correctly read the
+   version off the *live* project rather than needing it passed in.
+   Followed by the same round-trip Nuke got: `/launch?version=1` then
+   `/launch?version=2`, each confirmed against Resolve's own
+   `GetCurrentProject()` afterward.
+
+**Not checked**, and worth knowing before trusting this fully:
+
+- **The cold-start path** (`resolve_launch.ensure_running`, launching
+  Resolve via `Popen` and polling for its scripting API to come up) has
+  never actually run - Resolve was already open the entire time, since
+  closing someone else's live Resolve session with unknown unsaved work to
+  test a cold start was not a reasonable thing to do unattended. The code
+  follows the same documented poll-until-ready pattern used elsewhere in
+  this project, but "the pattern is right" is exactly the kind of claim
+  that needed correcting twice already tonight (Blender's `review.py`, the
+  settings.json drift) once someone actually tried it for real.
+- Resolve's own Publish panel/button clicked by a human, the way the Nuke
+  gap is worded too - `upload()` was exercised directly and for real, but
+  never through the actual UI button end to end.
+- The frontend's Launch button and "Image N from vX" label against a real
+  Resolve task in a browser - same gap as Nuke, same reason.
+- A test comment was left on the real `Color Grading` task on `sc01/sh01`
+  ("resolve launcher verification", tagged `[[v002]]`) - harmless test data
+  on the test project, not cleaned up, same as the Blender and Nuke ones.
+- Resolve was left switched to `KitsuTest-Project_sc01_sh01_Color-
+  Grading_v002` (the last test performed) rather than whatever project was
+  open before testing started - nothing was modified or deleted, `LoadProject`
+  only changes which project is currently active, but worth knowing the
+  active project changed if that machine's Resolve is shared.

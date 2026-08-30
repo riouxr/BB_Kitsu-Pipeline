@@ -16,6 +16,7 @@ import os
 
 from BB_core import settings, workfiles
 from BB_core.context import EntityContext
+from BB_core.versioning import tag_comment
 
 from . import resolve_ops, session
 
@@ -138,9 +139,25 @@ def render_folder_for(project, sequence, shot, task, version):
 
 
 def upload(task, status, comment, file_path, log=print):
-    '''Publish an already-rendered file against ``task``. No re-render.'''
+    '''Publish an already-rendered file against ``task``. No re-render.
+
+    Tags the comment with the current Resolve project's version, the same
+    way a Blender or Nuke publish tags its work-file version - the only
+    durable link between a Kitsu preview revision and the project that
+    produced it, since a colourist can publish several stills off one
+    project version exactly as easily as a 3D artist can publish several
+    angles off one saved scene. Untagged (silently - launching from an
+    untagged image already falls back to the latest project version, the
+    same as the other two DCCs) when there is no current project to read a
+    version from, which should not happen in practice but costs nothing to
+    guard against.
+    '''
+    project = resolve_ops.get_current_project()
+    version = resolve_ops.version_from_name(project.GetName()) if project else None
+    text = tag_comment(comment, version) if version else comment
+
     log('[publish] file=%s' % file_path)
     return state.client.publish_preview(
-        task['id'], file_path, comment=comment,
+        task['id'], file_path, comment=text,
         task_status_id=status['id'] if status else None,
         normalize=False, log=log)

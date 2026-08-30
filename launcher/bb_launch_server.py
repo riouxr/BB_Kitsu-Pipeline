@@ -29,8 +29,7 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import bb_launch
-import launcher_config
-from BB_core import credentials, settings, versioning, workfiles
+from BB_core import credentials, settings
 from BB_core.kitsu import KitsuClient, KitsuError, explain
 from BB_core.workfiles import RootNotConfigured
 
@@ -69,35 +68,34 @@ def _get_client():
 
 
 def _resolve(task_id):
-    """``(context, config, dcc, work_dir, ext)`` for a task id.
+    """``(context, config, dcc)`` for a task id.
 
-    Shared by both routes: the version list and the launch itself have to
-    agree on exactly which folder and extension they mean, or the versions
-    shown in the picker could disagree with what Launch actually finds.
+    Shared by both routes, and by ``bb_launch.py``'s own CLI - one place
+    decides what a task id means, so the version list and the launch itself
+    can never disagree about it.
     """
     client = _get_client()
     context = bb_launch.resolve_context(client, task_id)
     config = settings.config(client.project(context.project_id))
     dcc = bb_launch.dcc_for(context, config)
-    work_dir = workfiles.work_dir(context, config)
-    ext = config.dcc(dcc).get("ext", "")
-    return context, config, dcc, work_dir, ext
+    return context, config, dcc
 
 
 def _handle_versions(query):
-    """Every local scene version for a task, newest first.
+    """Every local version of a task's work, newest first.
 
     What the task panel's version picker is built from - Kitsu's own preview
     revision numbers are a different sequence (see launcher.js) and cannot
-    stand in for this.
+    stand in for this. A ``Path`` (Blender/Nuke) or a Resolve project name
+    stringifies fine either way, so the identifier is dropped here and only
+    the version numbers go back - nothing downstream of this route needs it.
     """
     task_id = (query.get("task_id") or [None])[0]
     if not task_id:
         return 400, {"error": "missing task_id"}
 
-    context, config, dcc, work_dir, ext = _resolve(task_id)
-    found = versioning.existing_versions(work_dir, context.as_fields(), ext, config)
-    versions = sorted((v for v, _path in found), reverse=True)
+    context, config, dcc = _resolve(task_id)
+    versions = [v for v, _identifier in bb_launch.list_versions(context, config, dcc)]
     return 200, {"versions": versions, "dcc": dcc}
 
 
@@ -108,28 +106,9 @@ def _handle_launch(query):
     version = (query.get("version") or [None])[0]
     wanted_version = int(version) if version else None
 
-    context, config, dcc, work_dir, ext = _resolve(task_id)
-
-    if wanted_version:
-        existing = dict(versioning.existing_versions(
-            work_dir, context.as_fields(), ext, config))
-        if wanted_version not in existing:
-            return 404, {"error":
-                ("no v%03d on disk for %s / %s / %s - versions found: %s"
-                 % (wanted_version, context.group, context.entity, context.task,
-                    ", ".join("v%03d" % v for v in sorted(existing)) or "none"))}
-        scene_path = existing[wanted_version]
-    else:
-        found = versioning.latest_version(
-            work_dir, context.as_fields(), ext, config)
-        if not found:
-            return 404, {"error":
-                ("no work file yet for %s / %s / %s - create one from %s first"
-                 % (context.group, context.entity, context.task, dcc))}
-        _, scene_path = found
-
-    bb_launch.launch(dcc, launcher_config.get(bb_launch._EXE_SETTING[dcc]), scene_path)
-    return 200, {"message": "opening %s in %s" % (scene_path, dcc)}
+    context, config, dcc = _resolve(task_id)
+    version, identifier = bb_launch.open_version(context, config, dcc, wanted_version)
+    return 200, {"message": "opening %s in %s" % (identifier, dcc)}
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -33,13 +33,14 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import launcher_config
+import resolve_launch
 from BB_core import credentials, settings, versioning, workfiles
 from BB_core.context import EntityContext
 from BB_core.kitsu import KitsuClient, KitsuError, explain
 from BB_core.workfiles import RootNotConfigured
 
 # Which local setting names the executable for each dcc.
-_EXE_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe"}
+_EXE_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe"}
 
 _TASK_ID = re.compile(r"task_id=([0-9a-fA-F-]+)")
 
@@ -144,6 +145,62 @@ def launch(dcc, exe, scene_path):
     subprocess.Popen([exe, str(scene_path)])
 
 
+def list_versions(context, config, dcc):
+    """Every version of this task's work as ``(version, identifier)``, newest
+    first - a ``Path`` for a file-based DCC, a Resolve project name for
+    Resolve. One shape either way, so a caller does not need to know which
+    kind of DCC it is asking about.
+    """
+    if dcc == "resolve":
+        return resolve_launch.resolve_versions(context)
+    work_dir = workfiles.work_dir(context, config)
+    ext = config.dcc(dcc).get("ext", "")
+    found = versioning.existing_versions(work_dir, context.as_fields(), ext, config)
+    return sorted(found, reverse=True)
+
+
+def open_version(context, config, dcc, wanted_version=None):
+    """Opens *wanted_version* of this task in *dcc*, or the latest.
+
+    Returns ``(version, identifier)``. Raises :class:`KitsuError` with a
+    message meant to reach whoever asked - the CLI's stdout, or the
+    browser's Launch button by way of ``bb_launch_server.py`` - not just a
+    developer reading a traceback.
+    """
+    versions = list_versions(context, config, dcc)
+
+    if wanted_version:
+        match = next((v for v in versions if v[0] == wanted_version), None)
+        if not match:
+            raise KitsuError(
+                "no v%03d for %s / %s / %s - versions found: %s"
+                % (wanted_version, context.group, context.entity, context.task,
+                   ", ".join("v%03d" % v for v, _identifier in versions) or "none"))
+    else:
+        if not versions:
+            raise KitsuError(
+                "no work yet for %s / %s / %s - create one from %s first"
+                % (context.group, context.entity, context.task, dcc))
+        match = versions[0]
+
+    version, identifier = match
+    exe = launcher_config.get(_EXE_SETTING[dcc])
+
+    if dcc == "resolve":
+        if not resolve_launch.ensure_running(exe):
+            raise KitsuError(
+                "could not reach Resolve - is it installed, and is %r set? "
+                "(python dcc_versions.py set resolve <path>)" % _EXE_SETTING[dcc])
+        try:
+            resolve_launch.open_project(identifier)
+        except RuntimeError as error:
+            raise KitsuError(str(error))
+    else:
+        launch(dcc, exe, identifier)
+
+    return version, identifier
+
+
 def main(argv):
     if len(argv) < 2:
         print("usage: bb_launch.py <task_id or bbopen:// url>")
@@ -172,30 +229,8 @@ def main(argv):
         config = settings.config(client.project(context.project_id))
         dcc = dcc_for(context, config)
 
-        work_dir = workfiles.work_dir(context, config)
-        ext = config.dcc(dcc).get("ext", "")
-
-        if wanted_version:
-            existing = dict(versioning.existing_versions(
-                work_dir, context.as_fields(), ext, config))
-            if wanted_version not in existing:
-                print("no v%03d on disk for %s / %s / %s - versions found: %s"
-                      % (wanted_version, context.group, context.entity,
-                         context.task,
-                         ", ".join("v%03d" % v for v in sorted(existing)) or "none"))
-                return 1
-            version, scene_path = wanted_version, existing[wanted_version]
-        else:
-            found = versioning.latest_version(
-                work_dir, context.as_fields(), ext, config)
-            if not found:
-                print("no work file yet for %s / %s / %s - create one from %s first"
-                      % (context.group, context.entity, context.task, dcc))
-                return 1
-            version, scene_path = found
-
-        launch(dcc, launcher_config.get(_EXE_SETTING[dcc]), scene_path)
-        print("opening %s in %s (v%03d)" % (scene_path, dcc, version))
+        version, identifier = open_version(context, config, dcc, wanted_version)
+        print("opening %s in %s (v%03d)" % (identifier, dcc, version))
         return 0
     except KitsuError as error:
         print(explain(error, server, email))
