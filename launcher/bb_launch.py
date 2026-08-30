@@ -167,6 +167,19 @@ def open_version(context, config, dcc, wanted_version=None):
     browser's Launch button by way of ``bb_launch_server.py`` - not just a
     developer reading a traceback.
     """
+    exe = launcher_config.get(_EXE_SETTING[dcc])
+
+    # Resolve has to be connected *before* asking it what versions exist -
+    # listing versions means reading its own project database
+    # (list_versions -> resolve_versions), which answers "nothing found"
+    # rather than raising when Resolve is not reachable yet. Doing this in
+    # the other order silently reported "no work yet" for a task that had
+    # two real versions, just because Resolve happened to be closed.
+    if dcc == "resolve" and not resolve_launch.ensure_running(exe):
+        raise KitsuError(
+            "could not reach Resolve - is it installed, and is %r set? "
+            "(python dcc_versions.py set resolve <path>)" % _EXE_SETTING[dcc])
+
     versions = list_versions(context, config, dcc)
 
     if wanted_version:
@@ -184,13 +197,8 @@ def open_version(context, config, dcc, wanted_version=None):
         match = versions[0]
 
     version, identifier = match
-    exe = launcher_config.get(_EXE_SETTING[dcc])
 
     if dcc == "resolve":
-        if not resolve_launch.ensure_running(exe):
-            raise KitsuError(
-                "could not reach Resolve - is it installed, and is %r set? "
-                "(python dcc_versions.py set resolve <path>)" % _EXE_SETTING[dcc])
         try:
             resolve_launch.open_project(identifier)
         except RuntimeError as error:

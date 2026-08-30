@@ -333,22 +333,32 @@ not just trusted from an HTTP 200. Against a real Color Grading task on
    `/launch?version=2`, each confirmed against Resolve's own
    `GetCurrentProject()` afterward.
 
-**Not checked**, and worth knowing before trusting this fully:
+**The cold-start path was tried for real after the first pass reported here
+turned out to be wrong** - the user closed Resolve, tried Launch from a real
+browser, and got nothing. That surfaced a real bug: `open_version()` was
+asking Resolve what versions exist (reading its project database) *before*
+confirming Resolve was even reachable, and reading that database when
+Resolve is not running answers "nothing found" rather than raising - so a
+task with two real versions silently reported "no work yet," and
+`ensure_running()` - the code that launches Resolve and waits for it - was
+never even reached. Fixed by ensuring the connection first, only for
+`dcc == "resolve"`, before asking for the version list at all. Retested
+cold, for real, with Resolve confirmedly closed beforehand: **`Popen`-launched
+Resolve, waited ~50 seconds for its scripting API to come up, then opened
+the right project - confirmed the same way as everything else in this
+section, by reading `GetCurrentProject()` back from Resolve itself
+afterward.** The polling loop's upper bound (90s) was not tested - a real
+launch settled well inside it.
 
-- **The cold-start path** (`resolve_launch.ensure_running`, launching
-  Resolve via `Popen` and polling for its scripting API to come up) has
-  never actually run - Resolve was already open the entire time, since
-  closing someone else's live Resolve session with unknown unsaved work to
-  test a cold start was not a reasonable thing to do unattended. The code
-  follows the same documented poll-until-ready pattern used elsewhere in
-  this project, but "the pattern is right" is exactly the kind of claim
-  that needed correcting twice already tonight (Blender's `review.py`, the
-  settings.json drift) once someone actually tried it for real.
+**Still not checked**, and worth knowing before trusting this fully:
+
 - Resolve's own Publish panel/button clicked by a human, the way the Nuke
   gap is worded too - `upload()` was exercised directly and for real, but
   never through the actual UI button end to end.
-- The frontend's Launch button and "Image N from vX" label against a real
-  Resolve task in a browser - same gap as Nuke, same reason.
+- The frontend's "Image N from vX" label against a real Resolve task in a
+  browser - the Launch button itself *was* clicked for real by the user
+  (that is how the cold-start bug above was actually found), but nobody has
+  yet looked at whether the label reads correctly for a Color Grading task.
 - A test comment was left on the real `Color Grading` task on `sc01/sh01`
   ("resolve launcher verification", tagged `[[v002]]`) - harmless test data
   on the test project, not cleaned up, same as the Blender and Nuke ones.
