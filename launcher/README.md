@@ -129,6 +129,58 @@ branch behind one shared shape (`(version, identifier)` - a `Path` or a
 project name) so `bb_launch_server.py` and the CLI do not need to know which
 kind of DCC they are talking to.
 
+### Creating a task's first version (Blender only, so far)
+
+Before this, a task with nothing on disk yet was a dead end: Launch just
+said "create one from blender first" and left the artist to do that by
+hand. Now, for Blender specifically, `open_version()` creates and stamps a
+real v001 instead - by reusing the add-on's own creation logic
+(`operators._create_version`, the same function `bpy.ops.bb.new_workfile`
+calls), not by writing an empty `.blend` some other way and hoping the
+pipeline treats it as a real version.
+
+That function runs *inside* a real Blender, though, and normally reads its
+context off the browser's own selected project/sequence/shot/task
+properties - which do not exist when there is no browser UI to have
+selected anything. So `blender_create_bg.py` runs inside a `--background`
+Blender (`blender_create.py` launches it, given the `EntityContext` and
+path `bb_launch.py` already resolved via Kitsu) and calls
+`_create_version` directly, entirely bypassing the operator and its
+UI-property dependency. Every UI-only step inside it - the viewport
+thumbnail grab, the "publish now?" popup - already guards itself against
+`bpy.app.background`/no-window (`_ask_to_publish`'s check, and
+`generate_datablock_previews`'s own "skipped in background mode" note), so
+none of that had to be handled specially here; it already worked this way
+before this feature existed.
+
+Verified end to end, and it took two real bugs to get there - both found by
+actually calling this through the live `/launch` endpoint repeatedly rather
+than trusting one clean run:
+
+- The first attempt threw `TypeError: argument of type 'NoneType' is not a
+  container or iterable`. Cause: `subprocess.run(..., text=True)` decodes
+  Blender's captured output with Windows' default codepage (`cp1252` here),
+  and one of this machine's ~50 *other* Blender add-ons prints something
+  outside it - not a bug in Blender or in anything of ours, but it crashed
+  Python's own output-reading thread and silently left `result.stdout` as
+  `None`. Fixed by decoding as UTF-8 with `errors="replace"` instead of
+  trusting the system codepage.
+- Retested five times in a row afterward (once by hand, then three more
+  through the real endpoint, closing Blender and deleting the created file
+  between each) - all five succeeded and each produced a real, openable
+  `.blend` at the correct versioned path.
+
+**Not done yet**: Nuke and Resolve. Nuke has the equivalent function already
+(`BB_pipeline_nuke.scripts.create_version` - same shape as Blender's), and a
+`nuke_create_bg.py` was written and started to be tested the same way, but
+Nuke's `-t` (terminal) mode turned out to need a license type this machine
+does not have configured, and running the script through a normal
+interactive launch instead did not visibly execute it either (no error, no
+file, nothing) - not chased further since the user's original ask was
+specifically about Blender. Resolve is architecturally simpler for this
+(`ProjectManager.CreateProject(name)`, no file involved at all), but has not
+been wired in either.
+
 ## Files in this folder
 
 | File | Role |
@@ -136,6 +188,7 @@ kind of DCC they are talking to.
 | `bb_launch.py` | Core resolve + launch logic - `list_versions()`/`open_version()` branch between the file-based and Resolve mechanisms. Also a CLI: `python bb_launch.py <task_id>`. |
 | `bb_launch_server.py` | **What the browser button actually calls.** `GET /launch?task_id=...&version=...` and `GET /versions?task_id=...`, on `127.0.0.1:53212`. Must be running - see [Running the server](#running-the-server-not-yet-automatic). |
 | `resolve_launch.py` | Resolve-only half of the launch logic: connecting to Resolve's scripting API, listing/opening projects by name. Kept separate from `bb_launch.py` because none of it applies to the file-based DCCs. |
+| `blender_create.py` / `blender_create_bg.py` | Create a task's first Blender work file when Launch finds none - see [Creating a task's first version](#creating-a-tasks-first-version-blender-only-so-far). The `_bg` file is what actually runs *inside* Blender; the other is what `bb_launch.py` calls to run it. |
 | `launcher_config.py` | `blender_exe`/`nuke_exe`/`resolve_exe` paths, in their own file (`~/.BB_pipeline/launcher.json`) - see [Why a separate config file](#why-a-separate-config-file). |
 | `dcc_versions.py` | CLI to list/set which installed DCC build to launch: `python dcc_versions.py list`, `set blender 5.1`, `current`. |
 | `install.py` | Registers `bbkitsu://` (terminal/Run-dialog use only - see above). `--remove` undoes it. |

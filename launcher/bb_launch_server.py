@@ -146,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             message = explain(error) if isinstance(error, KitsuError) else str(error)
             status, payload = 502, {"error": message}
         except Exception as error:  # noqa: BLE001 - reported to the page, not swallowed
+            import traceback
+            traceback.print_exc()
             status, payload = 500, {"error": str(error)}
 
         body = json.dumps(payload).encode("utf-8")

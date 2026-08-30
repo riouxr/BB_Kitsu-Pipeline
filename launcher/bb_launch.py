@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import blender_create
 import launcher_config
 import resolve_launch
 from BB_core import credentials, settings, versioning, workfiles
@@ -189,6 +190,18 @@ def open_version(context, config, dcc, wanted_version=None):
                 "no v%03d for %s / %s / %s - versions found: %s"
                 % (wanted_version, context.group, context.entity, context.task,
                    ", ".join("v%03d" % v for v, _identifier in versions) or "none"))
+    elif not versions and dcc == "blender":
+        # Blender is the one DCC where "nothing exists yet" doesn't have to
+        # be a dead end: a fresh startup scene is a real, useful first
+        # version, so Launch creates and stamps it (the same logic
+        # `bpy.ops.bb.new_workfile` uses, see blender_create_bg.py) rather
+        # than sending the artist to do it by hand first.
+        path, version = workfiles.next_workfile(context, dcc, config)
+        try:
+            blender_create.create(exe, context.at_version(version), path)
+        except RuntimeError as error:
+            raise KitsuError(str(error))
+        match = (version, path)
     else:
         if not versions:
             raise KitsuError(
