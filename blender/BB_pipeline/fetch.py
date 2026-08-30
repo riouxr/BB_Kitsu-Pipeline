@@ -115,6 +115,18 @@ def connect(context, password, background=False):
         name = (client.user or {}).get('full_name') or preferences.email
         state.say('connected as %s - %d project(s)' % (name, len(state.projects)))
 
+        # A file already open with its own stamped context wins over
+        # whatever project was last browsed: connecting happens in the
+        # background after a Launch-opened file has already loaded, and
+        # clobbering its selectors with an unrelated remembered project is
+        # how a correctly-named file came to resolve the wrong naming
+        # scheme and fail "not named to the pipeline scheme".
+        if state.context is not None and any(
+                p['id'] == state.context.project_id for p in state.projects):
+            from . import handlers
+            if handlers.restore_selection(state.context, context):
+                return
+
         # Pick up where the browser was left. Setting the project runs the
         # usual cascade, which restores the rest.
         remembered = prefs.recall(context)

@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import bb_launch
+import launcher_config
 from BB_core import credentials, settings
 from BB_core.kitsu import KitsuClient, KitsuError, explain
 from BB_core.workfiles import RootNotConfigured
@@ -36,11 +37,49 @@ from BB_core.workfiles import RootNotConfigured
 HOST = "127.0.0.1"
 PORT = 53212
 
+# Session tokens for whichever account is authenticating (see bot_email in
+# launcher_config.py) - saved so a restart resumes instead of logging in
+# fresh every time, which is worth avoiding on its own even though it turned
+# out not to be what was booting the artist's browser tab (see bot_email's
+# own comment in launcher_config.py for that story).
+SESSION_FILE = Path.home() / ".BB_pipeline" / "launcher_session.json"
+
 # One client, reused across requests rather than logging in from scratch each
 # time - launching is meant to feel instant, and a login round trip is the
 # slowest part of the whole request.
 _client_lock = threading.Lock()
 _client = None
+
+
+def _load_session():
+    try:
+        with open(SESSION_FILE, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def _save_session(client, email):
+    SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SESSION_FILE, "w", encoding="utf-8") as handle:
+        json.dump({
+            "server": client.host,
+            "email": email,
+            "access_token": client.access_token,
+            "refresh_token": client.refresh_token,
+        }, handle, indent=2)
+
+
+def _log_in_fresh(server, email, verify):
+    password = credentials.get_password(email)
+    if not password:
+        raise KitsuError(
+            "no stored password for %s - log in once from Blender or "
+            "Nuke with 'remember password' on" % email)
+    client = KitsuClient(server, verify=verify)
+    client.log_in(email, password)
+    print("[BB] logged in fresh as %s" % email, flush=True)
+    return client
 
 
 def _get_client():
@@ -50,19 +89,40 @@ def _get_client():
             return _client
 
         values = settings.load()
-        server, email = values.get("server"), values.get("email")
+        server = values.get("server")
+        # A dedicated bot account, not the artist's own login: Kitsu allows
+        # only one active session per person, so authenticating here as the
+        # same person the browser is already logged in as boots that browser
+        # tab every time this makes a request - proven by testing a resumed,
+        # no-login-call session and seeing it happen anyway. Falls back to
+        # the shared artist email only until a bot account is configured.
+        email = launcher_config.get("bot_email") or values.get("email")
         if not server or not email:
             raise KitsuError(
                 "Kitsu server/email not set - run the Blender or Nuke add-on "
                 "once to configure BB_pipeline settings")
-        password = credentials.get_password(email)
-        if not password:
-            raise KitsuError(
-                "no stored password for %s - log in once from Blender or "
-                "Nuke with 'remember password' on" % email)
+        verify = not values.get("allow_insecure_tls")
 
-        client = KitsuClient(server, verify=not values.get("allow_insecure_tls"))
-        client.log_in(email, password)
+        client = KitsuClient(server, verify=verify)  # normalizes the host
+        saved = _load_session()
+        if (saved and saved.get("server") == client.host
+                and saved.get("email") == email and saved.get("access_token")):
+            client.access_token = saved["access_token"]
+            client.refresh_token = saved.get("refresh_token", "")
+            try:
+                client.open_projects()  # cheapest authenticated call available
+                print("[BB] resumed saved session, no login needed", flush=True)
+                _client = client
+                return _client
+            except Exception:
+                if client.refresh():
+                    print("[BB] resumed saved session via refresh", flush=True)
+                    _save_session(client, email)
+                    _client = client
+                    return _client
+
+        client = _log_in_fresh(server, email, verify)
+        _save_session(client, email)
         _client = client
         return _client
 
@@ -122,6 +182,11 @@ class Handler(BaseHTTPRequestHandler):
         # solely from the machine it is on, so there is no cross-origin
         # boundary here worth restricting.
         self.send_header("Access-Control-Allow-Origin", "*")
+        # Chrome's Private Network Access policy blocks a page served from a
+        # LAN address (Kitsu, at 192.168.x.x) from reaching 127.0.0.1 unless
+        # the preflight explicitly allows it - without this header the fetch
+        # fails at the browser level before this server even sees a GET.
+        self.send_header("Access-Control-Allow-Private-Network", "true")
 
     def do_OPTIONS(self):
         self.send_response(204)

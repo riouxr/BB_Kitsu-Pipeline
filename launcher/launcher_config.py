@@ -20,6 +20,13 @@ DEFAULTS = {
     "blender_exe": "",
     "nuke_exe": "",
     "resolve_exe": "",
+    # A dedicated Kitsu account for bb_launch_server.py, distinct from the
+    # artist's own login in BB_core/settings.json. Kitsu appears to allow
+    # only one active session per person - authenticating as the artist's
+    # own account here, even by resuming a saved token rather than logging
+    # in fresh, was booting their browser tab's live session every time the
+    # launcher made a request. A separate account has nothing to boot.
+    "bot_email": "",
 }
 
 

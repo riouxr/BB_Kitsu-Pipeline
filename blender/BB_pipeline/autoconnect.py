@@ -18,27 +18,39 @@ import bpy
 DELAY = 1.0
 
 
-def _try_connect():
+def connect_now(context=None, background=True):
+    '''Sign in with whatever is stored, exactly as the Connect menu item does.
+
+    Used both for the startup timer below and by ``handlers.on_load`` right
+    after opening a file that was never connected yet - a Launch-opened
+    Blender has no reason to wait a second background thread out before it
+    can restore the browser's selection to match the file it just opened.
+    '''
     from . import fetch, prefs, session
 
     if session.state.connected:
-        return None
+        return False
 
-    preferences = prefs.get()
+    preferences = prefs.get(context)
     if preferences is None or not preferences.server or not preferences.email:
-        return None
+        return False
 
     if session.credentials_module is None:
-        return None
+        return False
 
     password = session.credentials_module.get_password(preferences.email)
     if not password:
         # Nothing stored, so there is nothing to connect with silently.
-        return None
+        return False
 
     print('BB Kitsu Pipeline: connecting to %s as %s'
           % (preferences.server, preferences.email))
-    fetch.connect(bpy.context, password, background=True)
+    fetch.connect(context or bpy.context, password, background=background)
+    return True
+
+
+def _try_connect():
+    connect_now(background=True)
     return None
 
 

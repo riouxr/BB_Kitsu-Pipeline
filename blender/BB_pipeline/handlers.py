@@ -108,6 +108,16 @@ def on_load(_dummy):
         return
 
     if not state.connected:
+        # A Launch-opened file has never connected yet, and the background
+        # auto-connect timer racing this handler is what left the browser's
+        # selectors pointed at the wrong project before - connecting here,
+        # inline, is the same call the Connect menu item makes, just run the
+        # moment the file is open instead of hoping a worker thread gets
+        # there first.
+        from . import autoconnect
+        autoconnect.connect_now(background=False)
+
+    if not state.connected:
         state.say('opened %s - connect to Kitsu to publish it'
                   % entity_context.versioned())
         return
