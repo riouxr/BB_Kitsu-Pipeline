@@ -33,11 +33,26 @@ CONNECT_TIMEOUT = 90
 
 
 def is_running():
-    """True when Resolve is up and answering its scripting API right now."""
+    """True when Resolve is up and answering its scripting API right now.
+
+    Never trusts ``resolve_ops``'s cached connection on its own: that cache
+    only ever records "did connecting succeed once," and keeps returning
+    the same (by then dead) object forever after Resolve closes - this
+    process outlives any one Resolve session, unlike the Resolve-hosted
+    scripts ``resolve_ops`` was written for, where reconnecting was never a
+    concern. A live call (``GetProjectManager``) is what actually tells a
+    dead connection from a real one; on failure the cache is cleared so the
+    next attempt - the very next poll, or after ``ensure_running`` relaunches
+    Resolve - gets a genuine new connection instead of the same dead one.
+    """
     try:
-        return resolve_ops.get_resolve() is not None
+        resolve = resolve_ops.get_resolve()
+        if resolve is not None and resolve.GetProjectManager() is not None:
+            return True
     except Exception:
-        return False
+        pass
+    resolve_ops._resolve_cache = None
+    return False
 
 
 def wait_for_connection(timeout=CONNECT_TIMEOUT):

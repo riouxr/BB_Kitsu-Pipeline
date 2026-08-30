@@ -350,6 +350,26 @@ section, by reading `GetCurrentProject()` back from Resolve itself
 afterward.** The polling loop's upper bound (90s) was not tested - a real
 launch settled well inside it.
 
+**That fix was itself incomplete** - the very next real attempt (Resolve
+closed a second time, same long-running server process) failed exactly the
+same way, instantly. The actual bug: `resolve_ops.get_resolve()` caches its
+connection object the first time it succeeds, and `is_running()` was only
+checking "is the cached Python object non-`None`" - which stays true
+forever once cached, even after the Resolve process behind it is gone. So
+the second closed-Resolve attempt saw `is_running()` claim Resolve was
+already up, skipped `ensure_running`'s relaunch-and-wait entirely, and went
+straight to a version list read against a dead connection - the exact same
+silent "nothing found" as before, just from a different cause than the
+first fix addressed. `is_running()` now makes a real call
+(`GetProjectManager()`) to tell a dead cached connection from a live one,
+and clears the cache on failure so the next attempt gets a genuine new
+connection. Retested twice in a row on one long-running server process -
+Resolve closed, launched (22s), closed again, launched again (40s) - both
+correctly relaunched Resolve rather than silently failing the second time.
+This is exactly the failure mode a real user hit twice in a row before it
+was actually fixed; if Launch still does nothing for a Color Grading task
+after this, that is worth treating as a new bug, not a repeat of this one.
+
 **Still not checked**, and worth knowing before trusting this fully:
 
 - Resolve's own Publish panel/button clicked by a human, the way the Nuke
