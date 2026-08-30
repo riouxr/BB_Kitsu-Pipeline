@@ -573,11 +573,12 @@ def config(context=None):
 def _selected_project(context=None):
     '''The Kitsu project a scene belongs to, however it can be found.
 
-    The browser's selection first. Then the project it was last pointed at,
-    and then what was last seen of that project - because a .blend opened
-    from disk in a Blender that has never connected still has renders to
-    place, and the roots live in the project's Kitsu brief. Without the last
-    two the render path is silently not set at all.
+    The browser's selection first. Then the file's own stamped context, then
+    the project it was last pointed at, and then what was last seen of that
+    project - because a .blend opened from disk in a Blender that has never
+    connected still has renders to place, and the roots live in the
+    project's Kitsu brief. Without the last two the render path is silently
+    not set at all.
 
     Wrapped because this is called from draw code and during registration,
     when the window manager may not carry the browser properties yet.
@@ -591,6 +592,27 @@ def _selected_project(context=None):
         found = None
     if found is not None:
         return found
+
+    # The file's own stamp next, before any bookmark. `on_load` reads this
+    # into `state.context` unconditionally, but only pushes it into the
+    # browser's own selectors when this session is connected to Kitsu - so a
+    # file opened by a Blender that has never connected (every file Launch
+    # hands over starts exactly this way) stamps correctly yet still landed
+    # here with nothing to show for it, falling through to whichever project
+    # was last *browsed*, which need not be this one at all. A save that
+    # then validated the *browsed* project's naming against a file stamped
+    # for a different one is exactly the "not named to the pipeline scheme"
+    # a correctly-named file has no business raising.
+    stamped = getattr(session.state, 'context', None)
+    if stamped is not None and stamped.project_id:
+        found = session.state.project(stamped.project_id)
+        if found is None:
+            try:
+                found = projects.cached(stamped.project_id)
+            except Exception:
+                found = None
+        if found is not None:
+            return found
 
     # The add-on's own bookmark next. This is where Blender keeps the last
     # project - the settings file is Nuke's - and reading only the latter
