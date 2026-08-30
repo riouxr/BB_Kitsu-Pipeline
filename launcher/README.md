@@ -366,9 +366,11 @@ and clears the cache on failure so the next attempt gets a genuine new
 connection. Retested twice in a row on one long-running server process -
 Resolve closed, launched (22s), closed again, launched again (40s) - both
 correctly relaunched Resolve rather than silently failing the second time.
-This is exactly the failure mode a real user hit twice in a row before it
-was actually fixed; if Launch still does nothing for a Color Grading task
-after this, that is worth treating as a new bug, not a repeat of this one.
+
+**Confirmed by the user afterward, from the real browser button** - Launch
+now works with Resolve either already open or fully closed beforehand. This
+is the one part of the whole Resolve pass that a human, not just this
+session's own curl/API checks, actually verified end to end.
 
 **Still not checked**, and worth knowing before trusting this fully:
 
@@ -382,8 +384,9 @@ after this, that is worth treating as a new bug, not a repeat of this one.
 - A test comment was left on the real `Color Grading` task on `sc01/sh01`
   ("resolve launcher verification", tagged `[[v002]]`) - harmless test data
   on the test project, not cleaned up, same as the Blender and Nuke ones.
-- Resolve was left switched to `KitsuTest-Project_sc01_sh01_Color-
-  Grading_v002` (the last test performed) rather than whatever project was
-  open before testing started - nothing was modified or deleted, `LoadProject`
-  only changes which project is currently active, but worth knowing the
-  active project changed if that machine's Resolve is shared.
+- Across all this testing, Resolve ended up switched between several
+  `KitsuTest-Project_sc01_sh01_Color-Grading_v00N` projects and was closed
+  and relaunched more than once - nothing was modified or deleted anywhere
+  (`LoadProject` only changes which project is currently active), but worth
+  knowing the active project moved around if that machine's Resolve is
+  shared with someone else.
