@@ -4,9 +4,11 @@ A **Launch** button in the Kitsu web UI's task panel that opens a task's
 work file directly in Blender (Nuke next) on the artist's own machine, the
 way ftrack Connect's software-launch buttons work.
 
-Status: **Blender done and confirmed working end-to-end.** Nuke has the
-publish-side tagging in place but the launcher itself has not been tested
-against it yet - that is tomorrow's task; see [Nuke TODO](#nuke-todo) below.
+Status: **Blender and Nuke both confirmed working end-to-end** - resolution,
+version tagging/labelling, and Launch itself, against real tasks with real
+local `.blend`/`.nk` files on the Kitsu test server. See
+[Nuke verification](#nuke-verification) for exactly what was checked and
+how, since it was done unattended and is worth a skim before trusting it.
 
 ## Why it works the way it does, not the obvious way
 
@@ -213,19 +215,51 @@ get a login shell that has it.
 5. Nothing to install browser-side: the Launch button ships with the Kitsu
    frontend build, not per-machine.
 
-## Nuke TODO
+## Nuke verification
 
-- Publish-side tagging is in (`nuke/BB_pipeline_nuke/publish.py`) and Nuke
-  has no separate render-review publish path the way Blender does, so
-  that side should already be complete - **not yet verified against a real
-  Nuke publish**, the way the Blender path was.
-- `bb_launch_server.py`'s DCC resolution already covers Nuke
-  (`config.dcc('nuke')` in `BB_core/presets/default.toml`) and
-  `launcher_config`/`dcc_versions.py` already have a `nuke_exe` slot, set
-  tonight (`C:\Program Files\Nuke16.0v6\Nuke16.0.exe`) - untested end to
-  end.
-- Confirm Nuke's `.nk` naming/versioning resolves through
-  `BB_core.workfiles`/`versioning` the same way Blender's `.blend` did -
-  should be automatic (same shared core, same config-driven templates), but
-  "should be" is exactly what needed correcting three times tonight on the
-  Blender side.
+Done unattended overnight, via the CLI/API level rather than a real Nuke
+session driving the add-on's UI - there was no way to click Nuke's own
+Publish button without a live interactive session, and the Nuke MCP bridge
+wasn't connected (it needs Nuke already running with its bridge listening
+*before* the calling session starts, and no Nuke was open when this one
+did). What was actually checked, against real tasks/files on the Kitsu test
+server (`KitsuTest Project`, sequence `sc01`, shot `sh01`, task
+`Compositing`, 8 real `.nk` versions already on disk):
+
+1. **DCC resolution** - `GET /versions?task_id=...` correctly resolved
+   `Compositing` to `nuke` (via Kitsu's own department for that task type,
+   same as the Blender path) and listed all 8 local versions.
+2. **Launch** - `GET /launch?task_id=...&version=3` actually opened
+   `Nuke16.0.exe` on `sc01_sh01_Compositing_v003.nk` - confirmed by
+   inspecting the spawned process's command line, not just a 200 response.
+3. **Tagging round-trip** - posted a comment through `KitsuClient.
+   publish_preview` using `tag_comment(..., 5)` directly (the same call
+   `nuke/BB_pipeline_nuke/publish.py`'s `send()` makes, exercised without a
+   live Nuke session), then confirmed `/versions` and a follow-up
+   `/launch?version=5` (no explicit version needed once the frontend reads
+   the tag - passed explicitly here only because this was tested without
+   the frontend in the loop) opened exactly `v005.nk`.
+
+**Not checked**, because they need an actual interactive Nuke session:
+
+- Nuke's own Publish button/panel actually calling `send()` with a real
+  save in progress - the code path was read and matches Blender's pattern
+  exactly (`tag_comment(comment or default_comment(path), entity_context.
+  version)`), and unlike Blender there is only the one publish path
+  (confirmed: `grep -rn publish_preview nuke/BB_pipeline_nuke/` finds one
+  call site, not two), but "matches the pattern" is exactly what needed
+  correcting on the Blender side after the first round of testing missed
+  `review.py`. Worth a real publish from Nuke to be sure.
+- The frontend's Launch button and "Image N from vX" label, from an actual
+  browser session against a Nuke task - the underlying data (tagged
+  comments, `/versions`, `/launch`) is confirmed correct, but the Vue
+  component itself was only exercised for Blender tasks by a human.
+- A test comment was left on the real `Compositing` task on `sc01/sh01`
+  ("nuke launcher verification", tagged `[[v005]]`) - same as the two left
+  on `knife`/Modeling earlier - harmless test data on the test project,
+  not cleaned up.
+- Nuke, unlike Blender 5.1, has no copy-drift trap to worry about:
+  `nuke/install.py` appends this repo's path straight to `sys.path` rather
+  than copying anything, so every fix here was live for a real Nuke session
+  with no sync step - one fewer thing to get wrong than the Blender side
+  had.
