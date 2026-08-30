@@ -129,7 +129,7 @@ branch behind one shared shape (`(version, identifier)` - a `Path` or a
 project name) so `bb_launch_server.py` and the CLI do not need to know which
 kind of DCC they are talking to.
 
-### Creating a task's first version (Blender only, so far)
+### Creating a task's first version
 
 Before this, a task with nothing on disk yet was a dead end: Launch just
 said "create one from blender first" and left the artist to do that by
@@ -170,16 +170,38 @@ than trusting one clean run:
   between each) - all five succeeded and each produced a real, openable
   `.blend` at the correct versioned path.
 
-**Not done yet**: Nuke and Resolve. Nuke has the equivalent function already
-(`BB_pipeline_nuke.scripts.create_version` - same shape as Blender's), and a
-`nuke_create_bg.py` was written and started to be tested the same way, but
-Nuke's `-t` (terminal) mode turned out to need a license type this machine
-does not have configured, and running the script through a normal
-interactive launch instead did not visibly execute it either (no error, no
-file, nothing) - not chased further since the user's original ask was
-specifically about Blender. Resolve is architecturally simpler for this
+### Nuke: done too, and a wrong conclusion corrected along the way
+
+Nuke has the equivalent function already
+(`BB_pipeline_nuke.scripts.create_version` - same shape as Blender's).
+`-t` (terminal) mode needs a license type this machine has none configured
+for, so unlike Blender there is no throwaway background mode available -
+`nuke_create.py` launches a real interactive Nuke with `nuke_create_bg.py`
+instead, and that session *is* the final result, not a step before one.
+
+The first attempt at this was reported here as "did not visibly execute it
+either (no error, no file, nothing)" - that was wrong, caught by actually
+watching the Nuke window (via screen access) rather than trusting a
+redirected-output log. **The script ran correctly the whole time** - the
+file really was created, at the right path. What genuinely did not work was
+`bb_launch.py`'s *wrapper* around it: modelled on Blender's, it waited for
+the launched process to exit and then read its captured stdout back to
+confirm success. An interactive Nuke correctly never exits, and stdout
+redirected to a file is fully buffered rather than line-buffered, so
+nothing written to it is even visible until the process does - a wait that
+would never return, not a script that never ran.
+
+Fixed by not waiting at all: `nuke_create.create()` fires the launch and
+returns immediately, the same way opening an *existing* file already does -
+Launch has never confirmed a file finished opening either. Verified twice
+in a row through the real `/launch` endpoint (closing Nuke and deleting the
+created file between runs): both times the HTTP call returned in under a
+second, and Nuke came up seconds later with the correct file already
+loaded, confirmed by screenshot rather than assumed from a 200 response.
+
+Resolve is architecturally simpler for this than either
 (`ProjectManager.CreateProject(name)`, no file involved at all), but has not
-been wired in either.
+been wired in.
 
 ## Files in this folder
 
@@ -188,7 +210,8 @@ been wired in either.
 | `bb_launch.py` | Core resolve + launch logic - `list_versions()`/`open_version()` branch between the file-based and Resolve mechanisms. Also a CLI: `python bb_launch.py <task_id>`. |
 | `bb_launch_server.py` | **What the browser button actually calls.** `GET /launch?task_id=...&version=...` and `GET /versions?task_id=...`, on `127.0.0.1:53212`. Must be running - see [Running the server](#running-the-server-not-yet-automatic). |
 | `resolve_launch.py` | Resolve-only half of the launch logic: connecting to Resolve's scripting API, listing/opening projects by name. Kept separate from `bb_launch.py` because none of it applies to the file-based DCCs. |
-| `blender_create.py` / `blender_create_bg.py` | Create a task's first Blender work file when Launch finds none - see [Creating a task's first version](#creating-a-tasks-first-version-blender-only-so-far). The `_bg` file is what actually runs *inside* Blender; the other is what `bb_launch.py` calls to run it. |
+| `blender_create.py` / `blender_create_bg.py` | Create a task's first Blender work file when Launch finds none - see [Creating a task's first version](#creating-a-tasks-first-version). The `_bg` file is what actually runs *inside* Blender; the other is what `bb_launch.py` calls to run it. |
+| `nuke_create.py` / `nuke_create_bg.py` | The Nuke equivalent - see [Nuke: done too](#nuke-done-too-and-a-wrong-conclusion-corrected-along-the-way). Launches Nuke directly rather than a throwaway background step; that session is the final result. |
 | `launcher_config.py` | `blender_exe`/`nuke_exe`/`resolve_exe` paths, in their own file (`~/.BB_pipeline/launcher.json`) - see [Why a separate config file](#why-a-separate-config-file). |
 | `dcc_versions.py` | CLI to list/set which installed DCC build to launch: `python dcc_versions.py list`, `set blender 5.1`, `current`. |
 | `install.py` | Registers `bbkitsu://` (terminal/Run-dialog use only - see above). `--remove` undoes it. |

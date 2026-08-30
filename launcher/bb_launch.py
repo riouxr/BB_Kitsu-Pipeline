@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import blender_create
 import launcher_config
+import nuke_create
 import resolve_launch
 from BB_core import credentials, settings, versioning, workfiles
 from BB_core.context import EntityContext
@@ -191,17 +192,31 @@ def open_version(context, config, dcc, wanted_version=None):
                 % (wanted_version, context.group, context.entity, context.task,
                    ", ".join("v%03d" % v for v, _identifier in versions) or "none"))
     elif not versions and dcc == "blender":
-        # Blender is the one DCC where "nothing exists yet" doesn't have to
-        # be a dead end: a fresh startup scene is a real, useful first
+        # Blender is one of two DCCs where "nothing exists yet" doesn't have
+        # to be a dead end: a fresh startup scene is a real, useful first
         # version, so Launch creates and stamps it (the same logic
         # `bpy.ops.bb.new_workfile` uses, see blender_create_bg.py) rather
-        # than sending the artist to do it by hand first.
+        # than sending the artist to do it by hand first. Blender's creation
+        # step runs in a throwaway background process and exits when done,
+        # so it is launched, then opened normally below like any other file.
         path, version = workfiles.next_workfile(context, dcc, config)
         try:
             blender_create.create(exe, context.at_version(version), path)
         except RuntimeError as error:
             raise KitsuError(str(error))
         match = (version, path)
+    elif not versions and dcc == "nuke":
+        # Nuke's equivalent, but launched differently: Nuke has no
+        # equivalent throwaway background mode available here (see
+        # nuke_create.py), so the interactive session it opens *is* the
+        # final result, not a step before one - nothing further to launch
+        # once nuke_create.create returns.
+        path, version = workfiles.next_workfile(context, dcc, config)
+        try:
+            nuke_create.create(exe, context.at_version(version))
+        except RuntimeError as error:
+            raise KitsuError(str(error))
+        return version, path
     else:
         if not versions:
             raise KitsuError(
