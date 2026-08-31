@@ -19,7 +19,7 @@ reading a task's history later.
 """
 import shutil
 
-from . import versioning, workfiles
+from . import naming, versioning, workfiles
 from .config import Config
 
 MASTER_NAME = "Master"
@@ -31,15 +31,29 @@ def master_dir(context, stream="main", config=None):
     return version_dir.parent / MASTER_NAME
 
 
+def _master_stem(context, config):
+    """The version's own stem with its version swapped for the word "master".
+
+    ``sh01_v003`` becomes ``sh01_master`` - the entity and task still read
+    off the filename the way any other render's does, only the version
+    number itself is gone, replaced by the one word that is true regardless
+    of which version it was.
+    """
+    stem = workfiles.render_stem(context, config)
+    version_token = "v" + naming.format_version(context.version or 1, config)
+    return stem.replace(version_token, "master", 1)
+
+
 def set_master(context, stream="main", config=None):
     """Copy this stream's version into Master, replacing whatever was there.
 
     Returns ``(folder, skipped_names)``.
 
-    Every frame is renamed to ``master.<frame>.<ext>`` on the way in - not
-    kept as ``<stem>_v003.<frame>.<ext>``. A version-numbered name sitting
-    in Master is a trap waiting for the next flag: if one frame is locked
-    (see below) and cannot be replaced, an old file named ``..._v001...``
+    Every frame is renamed from ``<stem>_v003.<frame>.<ext>`` to
+    ``<stem>_master.<frame>.<ext>`` on the way in - the version swapped out,
+    everything else about the name kept. A version-numbered name sitting in
+    Master is a trap waiting for the next flag: if one frame is locked (see
+    below) and cannot be replaced, an old file still saying ``..._v001...``
     would sit right next to the new ``..._v003...`` ones, and frame-pattern
     detection - which works by filename, not by which version a file
     happens to hold - would see two different name patterns claiming the
@@ -66,6 +80,7 @@ def set_master(context, stream="main", config=None):
     link = master_dir(context, stream, config)
     link.mkdir(parents=True, exist_ok=True)
 
+    stem = _master_stem(context, config)
     wanted_names = set()
     skipped = []
     for entry in target.iterdir():
@@ -74,7 +89,7 @@ def set_master(context, stream="main", config=None):
         match = workfiles._FRAME.search(entry.name)
         if not match:
             continue
-        dest_name = "master.%s%s" % (match.group(1), entry.suffix)
+        dest_name = "%s.%s%s" % (stem, match.group(1), entry.suffix)
         wanted_names.add(dest_name)
         try:
             shutil.copy2(entry, link / dest_name)
@@ -92,7 +107,14 @@ def set_master(context, stream="main", config=None):
 
 
 def master_frames(context, stream="main", config=None):
-    """``(pattern, first, last)`` for what is in Master right now, or None."""
+    """``(pattern, first, last)`` for what is in Master right now, or None.
+
+    ``_master_stem`` comes out the same regardless of which version number
+    ``context`` happens to carry - only the version token gets swapped out,
+    and the entity/task portion of the name never depended on it - so this
+    never needs to know which version is actually flagged to find Master's
+    files; it just looks for the one name every ``set_master`` ever writes.
+    """
     config = (config or Config()).for_project(context.project)
     if stream not in config.streams:
         return None
@@ -102,7 +124,8 @@ def master_frames(context, stream="main", config=None):
         return None
 
     ext = config.streams[stream].get("ext", "exr")
-    frames = sorted(folder.glob("master.*.%s" % ext))
+    stem = _master_stem(context.at_version(context.version or 1), config)
+    frames = sorted(folder.glob("%s.*.%s" % (stem, ext)))
     if not frames:
         return None
 

@@ -237,6 +237,24 @@ name back.
 | `dcc_versions.py` | CLI to list/set which installed DCC build to launch: `python dcc_versions.py list`, `set blender 5.1`, `current`. |
 | `install.py` | Registers `bbkitsu://` (terminal/Run-dialog use only - see above). `--remove` undoes it. |
 | `kitsu-frontend.patch` | The diff against upstream `cgwire/kitsu`, pinned at commit `f398fec6e8b011f65f31a916e994cb5a2fa96536` (`v1.0.58`). The actual clone is gitignored - multiple hundred MB, and irrelevant once built. |
+| `setup_bot_account.py` | Stores the launcher's own Kitsu login (see [The launcher's own Kitsu account](#the-launchers-own-kitsu-account)) - `python setup_bot_account.py <bot-email>`, run by hand so the password is typed into this terminal's own prompt, never through anything else. |
+
+## The launcher's own Kitsu account
+
+`bb_launch_server.py` authenticates as a dedicated account (`bot_email` in
+`~/.BB_pipeline/launcher.json`), not the artist's own login. Found the hard
+way: Kitsu appears to allow only one active session per person, and this
+server authenticating as the *same* person the browser is logged in as -
+even by resuming a saved session rather than logging in fresh, which was
+tried and ruled out first - silently signed the browser tab out every time
+a request went through. A separate account has nothing of the artist's to
+sign out. Give it a **Studio Manager** role (confirmed working; the account used
+here has no access to create true Admin accounts) but **do not** add it to
+any project's team - that role reads project data across the whole studio
+without requiring team membership, and the task assignee picker (a real,
+separate feature) is built from each project's team list, so adding this
+account there would make it selectable as someone to assign work to -
+confirmed the hard way, then confirmed gone again after removing it.
 
 ## Why a separate config file
 
@@ -337,11 +355,58 @@ get a login shell that has it.
 3. `pythonw bb_launch_server.py`, kept running (see
    [Running the server](#running-the-server-not-yet-automatic) - no
    auto-start yet on any machine).
-4. Log in once from the Blender or Nuke add-on with "remember password" on -
-   `bb_launch_server.py` reads the same stored Kitsu credentials
-   (`BB_core.credentials`), not a separate login.
-5. Nothing to install browser-side: the Launch button ships with the Kitsu
-   frontend build, not per-machine.
+4. Create the launcher's own Kitsu account and run `setup_bot_account.py` -
+   see [The launcher's own Kitsu account](#the-launchers-own-kitsu-account).
+   Log in once from the Blender or Nuke add-on too, with "remember
+   password" on, for the artist's own publish/comment activity.
+5. Nothing to install browser-side: the Launch and Set as Master buttons
+   ship with the Kitsu frontend build, not per-machine.
+
+## Master flagging
+
+A **Set as Master** button sits next to Launch on every preview in Kitsu's
+task panel - flags that image's local version as the task's master. Nuke and
+Resolve's browsers get a **Master only** checkbox (on by default) that reads
+straight off the actual `Master/` folder rather than filtering the version
+list by number, so reopening either DCC against something read from Master
+picks up whatever was most recently flagged with no extra step.
+
+Master is a **real file copy**, not a directory link. A link was tried
+first and made more sense on paper - point one stable folder at whichever
+version counts, and nothing downstream ever needs to change - but neither
+an NTFS junction nor a symlink survived contact with the actual setup: a
+mapped network drive refuses junctions outright ("local NTFS volumes are
+required"), a symlink needs elevation nothing here should be granted just to
+flag a render, and a hard link (tried once both were ruled out) got the same
+refusal Windows gives a symlink. So `BB_core/master.py` copies the frames
+instead, file by file, into a `Master/` folder sibling to the version
+folders - real disk space and copy time, paid once per flag, in exchange for
+something that needs nothing beyond an ordinary folder.
+
+Every frame is renamed from `<stem>_v003.<frame>.<ext>` to
+`<stem>_master.<frame>.<ext>` on the way in. That is not cosmetic: Nuke keeps
+a Read node's frames open for as long as the script pointed at Master stays
+loaded, and Windows refuses to delete a file another process still has
+open - clearing Master with `shutil.rmtree()` before copying the new version
+in, the first version of this, turned "flag a new master" into an exception
+the moment anyone had Master open anywhere, silently swallowed by the
+frontend's fire-and-forget `fetch()` so it looked like the button simply did
+nothing. Copying file by file, in place, tolerates a locked frame instead of
+failing the whole flag over one of them - and renaming every frame to a
+version-less name means a locked leftover from an old flag can never sit
+next to the new version's files under a *different* name and confuse
+frame-pattern detection, which works by filename, not by which version a
+file happens to hold.
+
+A `[[master:vN]]` comment is posted alongside the copy - not the mechanism,
+purely a durable record for the "Master (v005)" label in Nuke/Resolve's
+browsers and for anyone reading a task's history later. DaVinci Resolve
+caches media by path and does not notice new bytes at an unchanged one, so
+`bb_launch_server.py` also best-effort relinks any already-imported Master
+clip in whatever Resolve project happens to be open (`resolve_ops.
+refresh_master_clip`) via the scripting API's `MediaPool.RelinkClips` - a
+no-op when Resolve isn't running or has no such clip yet, since the next
+Import just picks up the new frames regardless.
 
 ## Nuke verification
 
