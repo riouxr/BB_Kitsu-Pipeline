@@ -32,16 +32,63 @@ def master_dir(context, stream="main", config=None):
 
 
 def set_master(context, stream="main", config=None):
-    """Copy this stream's version into Master, replacing whatever was there."""
+    """Copy this stream's version into Master, replacing whatever was there.
+
+    Returns ``(folder, skipped_names)``.
+
+    Every frame is renamed to ``master.<frame>.<ext>`` on the way in - not
+    kept as ``<stem>_v003.<frame>.<ext>``. A version-numbered name sitting
+    in Master is a trap waiting for the next flag: if one frame is locked
+    (see below) and cannot be replaced, an old file named ``..._v001...``
+    would sit right next to the new ``..._v003...`` ones, and frame-pattern
+    detection - which works by filename, not by which version a file
+    happens to hold - would see two different name patterns claiming the
+    same folder rather than one. A name that never encodes a version has
+    nothing to disagree about: the frame number is the only thing that
+    still varies, so the same name is always exactly the thing that should
+    be there once every frame has actually landed.
+
+    File by file, in place - not a wholesale ``rmtree`` then ``copytree``.
+    Nuke keeps a Read node's frames open for as long as the script pointed
+    at Master stays loaded, and Windows refuses to delete a file another
+    process still has open; clearing the folder first turned "flag a new
+    master" into a silent no-op the moment anyone had Master open anywhere.
+    Overwriting a file in place is something Windows generally allows even
+    while another process holds it open for reading, and a frame that
+    genuinely can't be touched is skipped rather than failing the whole
+    flag - one stale frame until whatever is locking it lets go beats
+    nothing updating at all.
+    """
     target = workfiles.render_dir(context, stream, config)
     if not target.is_dir():
         raise ValueError("no render at %s" % target)
 
     link = master_dir(context, stream, config)
-    if link.exists():
-        shutil.rmtree(link)
-    shutil.copytree(target, link)
-    return link
+    link.mkdir(parents=True, exist_ok=True)
+
+    wanted_names = set()
+    skipped = []
+    for entry in target.iterdir():
+        if not entry.is_file():
+            continue
+        match = workfiles._FRAME.search(entry.name)
+        if not match:
+            continue
+        dest_name = "master.%s%s" % (match.group(1), entry.suffix)
+        wanted_names.add(dest_name)
+        try:
+            shutil.copy2(entry, link / dest_name)
+        except OSError:
+            skipped.append(dest_name)
+
+    for entry in list(link.iterdir()):
+        if entry.is_file() and entry.name not in wanted_names:
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+
+    return link, skipped
 
 
 def master_frames(context, stream="main", config=None):
@@ -55,7 +102,7 @@ def master_frames(context, stream="main", config=None):
         return None
 
     ext = config.streams[stream].get("ext", "exr")
-    frames = sorted(folder.glob("*.%s" % ext))
+    frames = sorted(folder.glob("master.*.%s" % ext))
     if not frames:
         return None
 

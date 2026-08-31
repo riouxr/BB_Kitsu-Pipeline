@@ -194,12 +194,14 @@ def _handle_set_master(query):
     from resolve.BB_pipeline_resolve import resolve_ops
 
     copied = []
+    all_skipped = []
     for stream in sorted(getattr(config, "streams", {}) or {}):
         try:
-            master.set_master(versioned_context, stream, config)
+            _folder, skipped = master.set_master(versioned_context, stream, config)
         except ValueError:
             continue  # nothing rendered for this stream at this version
         copied.append(stream)
+        all_skipped.extend(skipped)
         # Best-effort: only does anything if Resolve happens to be open
         # with a Master clip already in its Media Pool from an earlier
         # flag - otherwise the next Import just picks up the new frames.
@@ -214,7 +216,12 @@ def _handle_set_master(query):
     client = _get_client()
     client.add_comment(task_id, versioning.format_master_tag(version))
 
-    return 200, {"message": "v%d -> Master (%s)" % (version, ", ".join(copied))}
+    message = "v%d -> Master (%s)" % (version, ", ".join(copied))
+    if all_skipped:
+        message += (" - %d frame(s) locked by another program, not updated: %s"
+                    % (len(all_skipped), ", ".join(all_skipped[:5])))
+
+    return 200, {"message": message}
 
 
 class Handler(BaseHTTPRequestHandler):
