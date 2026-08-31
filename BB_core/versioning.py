@@ -23,6 +23,23 @@ from .config import Config
 # an artist's own text mentioning a version in passing.
 _VERSION_TAG = re.compile(r"\[\[v(\d+)\]\]")
 
+# A second, distinct marker for "this version was flagged master", posted as
+# its own comment by the Kitsu page's "Set as Master" button - a durable,
+# human-readable record of what was master and when, kept apart from the
+# per-publish version tag above so parsing one can never pick up the other.
+_MASTER_TAG = re.compile(r"\[\[master:v(\d+)\]\]")
+
+
+def format_master_tag(version):
+    """The marker recording a version as master, e.g. ``"[[master:v5]]"``."""
+    return "[[master:v%d]]" % int(version)
+
+
+def parse_master_tag(text):
+    """The version out of a master-flag comment, or None without one."""
+    match = _MASTER_TAG.search(text or "")
+    return int(match.group(1)) if match else None
+
 
 def format_version_tag(version):
     """The marker for one version, e.g. ``"[[v003]]"``."""

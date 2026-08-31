@@ -236,6 +236,13 @@ def read_sequence(pattern, first, last):
     The path arrives with a printf placeholder already in it, which is what
     Nuke's Read wants - handing it a single frame would give a one-frame
     Read that silently ignores the rest of the sequence.
+
+    Picking the row labelled "Master" reads the same way as any other
+    version - the ``Master`` folder is a real, physical copy of whichever
+    version was flagged (see BB_core/master.py), kept current by "Set as
+    Master" re-copying into it, not by anything this Read node itself has to
+    track. Reopening the script re-reads whatever is on disk right now,
+    which is the whole point: nothing here needs to know a flag ever moved.
     """
     nuke = _nuke()
 

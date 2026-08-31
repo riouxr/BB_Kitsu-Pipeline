@@ -1,8 +1,8 @@
 diff --git a/src/components/sides/TaskInfo.vue b/src/components/sides/TaskInfo.vue
-index 766808af2..f6e5f387a 100644
+index 766808af2..281aa7b73 100644
 --- a/src/components/sides/TaskInfo.vue
 +++ b/src/components/sides/TaskInfo.vue
-@@ -130,6 +130,15 @@
+@@ -130,6 +130,25 @@
                      @update:model-value="onPreviewChanged"
                    />
                  </div>
@@ -15,27 +15,37 @@ index 766808af2..f6e5f387a 100644
 +                  <play-icon class="icon is-small" />
 +                  {{ $t('tasks.launch') }}
 +                </button>
++                <button
++                  class="button flexrow-item set-master-button"
++                  :title="setMasterHint"
++                  :disabled="!launchVersion"
++                  @click="onSetMasterClicked"
++                  v-if="!isCurrentUserClient"
++                >
++                  <star-icon class="icon is-small" />
++                  {{ $t('tasks.set_master') }}
++                </button>
                  <div class="filler"></div>
                  <div>
                    <router-link
-@@ -378,7 +387,7 @@
+@@ -378,7 +397,7 @@
  
  <script setup>
  // Imports
 -import { CornerRightUpIcon, XIcon } from 'lucide-vue-next'
-+import { CornerRightUpIcon, PlayIcon, XIcon } from 'lucide-vue-next'
++import { CornerRightUpIcon, PlayIcon, StarIcon, XIcon } from 'lucide-vue-next'
  import moment from 'moment'
  import {
    computed,
-@@ -403,6 +412,7 @@ import csv from '@/lib/csv'
+@@ -403,6 +422,7 @@ import csv from '@/lib/csv'
  import { isSupervisorInDepartments } from '@/lib/descriptors'
  import drafts from '@/lib/drafts'
  import func from '@/lib/func'
-+import { launchTask, parseVersionTag } from '@/lib/launcher'
++import { launchTask, parseVersionTag, setMasterVersion } from '@/lib/launcher'
  import {
    getDownloadAttachmentPath,
    getTaskEntityPath,
-@@ -798,6 +808,34 @@ const currentRevision = computed(
+@@ -798,6 +818,45 @@ const currentRevision = computed(
      props.currentParentPreview?.revision || currentPreview.value?.revision || 0
  )
  
@@ -67,10 +77,21 @@ index 766808af2..f6e5f387a 100644
 +  launchTask(props.task.id, launchVersion.value)
 +}
 +
++const setMasterHint = computed(() =>
++  launchVersion.value
++    ? t('tasks.set_master_hint_known', { version: launchVersion.value })
++    : t('tasks.set_master_hint_unknown')
++)
++
++const onSetMasterClicked = () => {
++  if (!launchVersion.value) return
++  setMasterVersion(props.task.id, launchVersion.value)
++}
++
  const displayedFrame = computed(
    () => props.currentFrame || currentFrameRaw.value
  )
-@@ -835,11 +873,17 @@ const previewOptions = computed(() => {
+@@ -835,11 +894,17 @@ const previewOptions = computed(() => {
    if (!taskPreviews.value) return []
    return [...taskPreviews.value]
      .sort((a, b) => b.revision - a.revision)
@@ -95,10 +116,10 @@ index 766808af2..f6e5f387a 100644
  const selectedTasksToDisplay = computed(() =>
 diff --git a/src/lib/launcher.js b/src/lib/launcher.js
 new file mode 100644
-index 000000000..92f512e44
+index 000000000..aae06c550
 --- /dev/null
 +++ b/src/lib/launcher.js
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,53 @@
 +// Opens a task's work file in its DCC via a tiny localhost HTTP server (see
 +// BB_Kitsu-Pipeline/launcher/bb_launch_server.py). Not a `bbkitsu://`-style
 +// custom protocol - that route was tried first, and Chrome's handling of
@@ -141,11 +162,22 @@ index 000000000..92f512e44
 +  // the caller's click handler.
 +  fetch(`${SERVER}/launch?${params}`).catch(() => {})
 +}
++
++// Flags one *local* version as this task's master - see BB_core/master.py
++// for why this posts a comment rather than touching anything on disk: the
++// comment IS the flag, read back by Nuke/Resolve's "Master only" filter and
++// by whatever creates a Read node/clip against it, not a trigger for some
++// job running elsewhere.
++export const setMasterVersion = (taskId, version) => {
++  if (!taskId || !version) return
++  const params = new URLSearchParams({ task_id: taskId, version })
++  fetch(`${SERVER}/set_master?${params}`).catch(() => {})
++}
 diff --git a/src/locales/en.js b/src/locales/en.js
-index af3c50b87..7fc58cf78 100644
+index af3c50b87..8b885b72d 100644
 --- a/src/locales/en.js
 +++ b/src/locales/en.js
-@@ -2037,6 +2037,10 @@ export default {
+@@ -2037,6 +2037,13 @@ export default {
      comment_image: 'Attach files',
      create_for_selection: 'Create a task for each empty cell',
      create_tasks: 'Add tasks',
@@ -153,6 +185,9 @@ index af3c50b87..7fc58cf78 100644
 +    launch_hint_known: 'Open v{version}, the work file behind this image, in its DCC',
 +    launch_hint_latest: 'Open the latest work file in its DCC (no local version known for this image)',
 +    preview_option_with_version: 'Image {revision} from v{version}',
++    set_master: 'Set as Master',
++    set_master_hint_known: 'Flag v{version}, the work file behind this image, as this task\'s master',
++    set_master_hint_unknown: 'No local version known for this image - cannot flag it as master',
      create_tasks_all_missing: 'Add all missing ({count})',
      create_tasks_all_missing_empty: 'Add all missing',
      create_tasks_disclaimer: 'If your task type is missing, verify it is listed in the Task Types section of the production settings.',

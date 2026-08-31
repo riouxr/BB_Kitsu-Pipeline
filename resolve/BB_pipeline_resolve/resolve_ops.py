@@ -91,6 +91,63 @@ def get_current_project():
     return get_project_manager().GetCurrentProject()
 
 
+def refresh_master_clip(context, stream, config, log=print):
+    '''Force Resolve to notice Master's new content, if it is already open.
+
+    Resolve caches media by path and does not detect new bytes written under
+    an unchanged one - the reason "Set as Master" alone left a stale colour
+    grade against fresh frames until someone manually relinked or cleared
+    the render cache by hand. ``MediaPool.RelinkClips`` against the same
+    folder is the documented way to make Resolve re-read it from a script,
+    the same fix a colourist would reach for, just automatic.
+
+    Silent, not an error, when there is nothing to refresh: Resolve is not
+    running, no project is open, or no clip has been imported from Master
+    yet - the next Import will pick up the new frames regardless.
+    '''
+    try:
+        resolve = get_resolve()
+        project = resolve.GetProjectManager().GetCurrentProject() if resolve else None
+    except Exception:
+        return False
+    if not project:
+        return False
+
+    media_pool = project.GetMediaPool()
+    if not media_pool:
+        return False
+
+    from BB_core import master as master_mod
+    folder = str(master_mod.master_dir(context, stream, config))
+    root = media_pool.GetRootFolder()
+    if not root:
+        return False
+
+    clip = _find_clip_in_folder(root, folder)
+    if clip is None:
+        return False
+
+    ok = media_pool.RelinkClips([clip], folder)
+    if ok:
+        log('[master] relinked Resolve clip against %s' % folder)
+    return bool(ok)
+
+
+def _find_clip_in_folder(pool_folder, target_dir):
+    '''The first clip anywhere in this Media Pool folder tree whose source
+    file lives in ``target_dir``, or None.'''
+    target = os.path.normcase(os.path.normpath(target_dir))
+    for clip in pool_folder.GetClipList() or []:
+        path = clip.GetClipProperty('File Path') or ''
+        if os.path.normcase(os.path.normpath(os.path.dirname(path))) == target:
+            return clip
+    for sub in pool_folder.GetSubFolderList() or []:
+        found = _find_clip_in_folder(sub, target_dir)
+        if found is not None:
+            return found
+    return None
+
+
 def import_sequence_folder(folder, log=print):
     '''Bring every frame in a folder into the Media Pool as one clip.
 

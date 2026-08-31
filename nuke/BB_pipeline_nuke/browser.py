@@ -101,6 +101,14 @@ class Browser(object):
         right_column = QtWidgets.QVBoxLayout(right)
         right_column.setContentsMargins(0, 0, 0, 0)
 
+        # On by default: a task with a flagged master is, by construction,
+        # one somebody has already decided is the right one to comp against -
+        # every WIP render in between is noise for that purpose, not a
+        # choice worth showing alongside it every time this opens.
+        self.master_only = QtWidgets.QCheckBox('Master only')
+        self.master_only.setChecked(bool(settings.get('master_only', True)))
+        right_column.addWidget(self.master_only)
+
         self.versions = QtWidgets.QListWidget()
         self.versions.setIconSize(QtCore.QSize(VERSION_ICON_WIDTH,
                                                VERSION_ICON_WIDTH * 9 // 16))
@@ -144,6 +152,7 @@ class Browser(object):
         self.import_button.clicked.connect(self._import)
         self.settings_button.clicked.connect(self._settings)
         self.refresh_button.clicked.connect(self.reload)
+        self.master_only.stateChanged.connect(self._on_master_only_changed)
 
         self._loading = False
         self._sequence_id = ''
@@ -361,6 +370,10 @@ class Browser(object):
         self.open_button.setEnabled(enabled)
         self.import_button.setEnabled(enabled)
 
+    def _on_master_only_changed(self, _state=0):
+        settings.set('master_only', self.master_only.isChecked())
+        self._refresh_versions()
+
     def _refresh_versions(self):
         self.versions.clear()
         self._renders = []
@@ -387,6 +400,10 @@ class Browser(object):
         """
         for button in (self.open_button, self.new_button, self.new_from_button):
             button.setVisible(self._authoring)
+        # Master only means something for a rendered sequence - which one is
+        # the comp-against version - and nothing for Nuke's own scripts,
+        # where every version is just a script, not a flagged deliverable.
+        self.master_only.setVisible(not self._authoring)
 
     def _list_scripts(self, entity_context):
         _QtCore, QtWidgets = _qt()
@@ -423,26 +440,54 @@ class Browser(object):
         config = session.config_for(entity_context)
         fallback = self._entity_pixmap(self._shot_id)
 
-        rows = []
-        for stream in sorted(getattr(config, 'streams', {}) or {'main': {}}):
-            try:
-                for version, pattern, first, last in workfiles.render_versions(
-                        entity_context, stream, config):
-                    rows.append((version, stream, pattern, first, last))
-            except Exception:
-                continue
+        streams = sorted(getattr(config, 'streams', {}) or {'main': {}})
 
-        for version, stream, pattern, first, last in sorted(rows, reverse=True):
-            label = 'v%03d    %s    %d-%d' % (version, stream, first, last)
-            if len(rows) and stream == 'main':
-                label = 'v%03d    %d-%d' % (version, first, last)
-            item = QtWidgets.QListWidgetItem(label)
-            self._decorate(item, entity_context, version, config, fallback)
-            self.versions.addItem(item)
-            self._renders.append((pattern, first, last))
+        if self.master_only.isChecked():
+            from BB_core import master
+
+            master_version = (master.current_master(state.client, self._task_id)
+                              if state.connected else None)
+            rows = []
+            for stream in streams:
+                try:
+                    frames = master.master_frames(entity_context, stream, config)
+                except Exception:
+                    frames = None
+                if frames is not None:
+                    pattern, first, last = frames
+                    rows.append((stream, pattern, first, last))
+
+            name = 'Master (v%03d)' % master_version if master_version else 'Master'
+            for stream, pattern, first, last in sorted(rows):
+                label = '%s    %s    %d-%d' % (name, stream, first, last)
+                if stream == 'main':
+                    label = '%s    %d-%d' % (name, first, last)
+                item = QtWidgets.QListWidgetItem(label)
+                self.versions.addItem(item)
+                self._renders.append((pattern, first, last))
+        else:
+            rows = []
+            for stream in streams:
+                try:
+                    for version, pattern, first, last in workfiles.render_versions(
+                            entity_context, stream, config):
+                        rows.append((version, stream, pattern, first, last))
+                except Exception:
+                    continue
+
+            for version, stream, pattern, first, last in sorted(rows, reverse=True):
+                label = 'v%03d    %s    %d-%d' % (version, stream, first, last)
+                if stream == 'main':
+                    label = 'v%03d    %d-%d' % (version, first, last)
+                item = QtWidgets.QListWidgetItem(label)
+                self._decorate(item, entity_context, version, config, fallback)
+                self.versions.addItem(item)
+                self._renders.append((pattern, first, last))
 
         if self._renders:
             self.versions.setCurrentRow(0)
+        elif self.master_only.isChecked():
+            self._say('no master flagged yet for this task')
         else:
             self._say('nothing rendered yet for this task')
 

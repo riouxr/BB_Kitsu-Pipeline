@@ -159,6 +159,11 @@ def main():
             ui.Label({'ID': 'BrStatusLbl', 'Text': '', 'WordWrap': True,
                      'MinimumSize': [0, 32],
                      'StyleSheet': 'color:#8a9a8a;font-size:11px;'}),
+            # On by default, same reasoning as the PySide browser: once a
+            # task has a flagged master, every WIP render in between is
+            # noise for the purpose of picking what to import.
+            ui.CheckBox({'ID': 'BrMasterOnly', 'Text': 'Master only',
+                        'Checked': bool(settings.get('master_only', True))}),
             # Resolve project versions for a task Resolve authors, or
             # rendered sequence versions for a "(renders)" one - never both,
             # exactly which the Task combo's own label already said. Click a
@@ -638,6 +643,10 @@ def main():
         seq  = ui_state['br_sequences'][idx_s]
         tree = itm['BrVersionTree']
 
+        # Master only means something for a rendered sequence and nothing
+        # for Resolve's own project versions - hide it there, same as Nuke.
+        itm['BrMasterOnly'].Visible = not state.authors(task)
+
         if state.authors(task):
             ui_state['br_version_mode'] = 'project'
             existing = resolve_ops.get_all_resolve_project_names()
@@ -657,6 +666,29 @@ def main():
             except Exception:
                 has_current = False
             set_btn(itm, 'BrNewFromCurrentBtn', has_current, BTN_ORANGE)
+
+        elif itm['BrMasterOnly'].Checked:
+            ui_state['br_version_mode'] = 'render'
+            try:
+                frames = publish.master_frames_for(proj, seq, shot, task)
+            except Exception as e:
+                itm['BrStatusLbl'].Text = 'Could not check Master: %s' % e
+                return
+
+            ui_state['br_render_versions'] = [(0, frames[0], frames[1], frames[2])] if frames else []
+            if frames:
+                master_version = None
+                if state.client and task:
+                    from BB_core import master
+                    master_version = master.current_master(state.client, task['id'])
+                name = 'Master (v%03d)' % master_version if master_version else 'Master'
+                row = tree.NewItem()
+                row.Text[0] = name
+                row.Text[1] = '%d frame(s)' % (frames[2] - frames[1] + 1)
+                tree.AddTopLevelItem(row)
+                itm['BrStatusLbl'].Text = 'Master — click to Import'
+            else:
+                itm['BrStatusLbl'].Text = 'no master flagged yet for this task'
 
         else:
             ui_state['br_version_mode'] = 'render'
@@ -688,13 +720,23 @@ def main():
                     looked_in = '(could not resolve a path)'
                 itm['BrStatusLbl'].Text = 'No rendered sequence found. Looked in:\n' + looked_in
 
+    def on_br_master_only_toggled(ev):
+        settings.set('master_only', itm['BrMasterOnly'].Checked)
+        _br_refresh_versions()
+
     def on_br_version_click(ev):
         item = ev.get('item') or ev.get('Item')
         if item is None: return
-        try:
-            version = int(item.Text[0].lstrip('vV'))
-        except (ValueError, AttributeError):
-            return
+        text = item.Text[0]
+        if text.startswith('Master'):
+            # A sentinel, not a number - Master has no version of its own to
+            # reconstruct a path from, only its own already-known folder.
+            version = 'master'
+        else:
+            try:
+                version = int(text.lstrip('vV'))
+            except (ValueError, AttributeError):
+                return
         ui_state['br_selected_version'] = version
         if ui_state['br_version_mode'] == 'project':
             set_btn(itm, 'BrOpenBtn', True, BTN_BLUE)
@@ -782,7 +824,8 @@ def main():
         set_btn(itm, 'BrImportBtn', False, BTN_PURPLE)
         itm['BrImportBtn'].Text = 'Importing...'
         try:
-            folder = publish.render_folder_for(proj, seq, shot, task, version)
+            folder = (publish.master_dir_for(proj, seq, shot, task) if version == 'master'
+                     else publish.render_folder_for(proj, seq, shot, task, version))
             log('[import] %s' % folder)
             resolve_ops.import_sequence_folder(folder, log=log)
             log('[import] done ✓')
@@ -917,6 +960,7 @@ def main():
     win.On.BrTask.CurrentIndexChanged      = on_br_combo
     win.On.BrTree.ItemClicked              = on_br_tree_click
     win.On.BrVersionTree.ItemClicked       = on_br_version_click
+    win.On.BrMasterOnly.Toggled           = on_br_master_only_toggled
     win.On.BrOpenBtn.Clicked               = on_br_action
     win.On.BrNewBtn.Clicked                = on_br_action
     win.On.BrNewFromCurrentBtn.Clicked     = on_br_action

@@ -351,6 +351,11 @@ class KitsuClient:
     def task(self, task_id):
         return self._fetch("tasks/%s" % task_id)
 
+    def comments(self, task_id):
+        """A task's comments, newest first - what master.py reads the
+        ``[[master:vN]]`` tag back out of."""
+        return self._fetch("tasks/%s/comments" % task_id)
+
     def shot(self, shot_id):
         """One shot, read fresh.
 
@@ -367,6 +372,28 @@ class KitsuClient:
         return self._fetch("projects/%s" % project_id)
 
     # -- publish --------------------------------------------------------------
+
+    def add_comment(self, task_id, text, task_status_id=None):
+        """Post a plain text comment, without changing the task's status.
+
+        Reuses whatever status is already set rather than requiring the
+        caller to pick one - a Kitsu comment is technically always a status
+        change event, but "flag this version as master" has nothing to do
+        with production status and should not move it.
+        """
+        if not task_status_id:
+            task_status_id = (self.task(task_id) or {}).get("task_status_id")
+        if not task_status_id:
+            raise KitsuError("no task status to comment against")
+
+        comment_obj = self._request(
+            "POST", "actions/tasks/%s/comment" % task_id,
+            json={"task_status_id": task_status_id, "comment": text or "",
+                  "checklist": [], "links": []},
+        )
+        if not comment_obj or not comment_obj.get("id"):
+            raise KitsuError("Kitsu did not return a comment")
+        return comment_obj
 
     def publish_preview(self, task_id, file_path, comment="", task_status_id=None,
                         set_main=True, normalize=False, log=None):

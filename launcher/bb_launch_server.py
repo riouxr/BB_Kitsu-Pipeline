@@ -171,6 +171,52 @@ def _handle_launch(query):
     return 200, {"message": "opening %s in %s" % (identifier, dcc)}
 
 
+def _handle_set_master(query):
+    """Copy one version into Master, right now, for every stream that has it.
+
+    The copy is the mechanism - see BB_core/master.py for why this is a real
+    copy rather than a directory link. It happens synchronously in this
+    request; the comment posted after is a durable record of what was
+    flagged and when, for the "Master (v005)" label in Nuke/Resolve's
+    browsers, not a trigger for anything.
+    """
+    task_id = (query.get("task_id") or [None])[0]
+    version = (query.get("version") or [None])[0]
+    if not task_id or not version:
+        return 400, {"error": "missing task_id or version"}
+    version = int(version)
+
+    from BB_core import master, versioning
+
+    context, config, _dcc = _resolve(task_id)
+    versioned_context = context.at_version(version)
+
+    from resolve.BB_pipeline_resolve import resolve_ops
+
+    copied = []
+    for stream in sorted(getattr(config, "streams", {}) or {}):
+        try:
+            master.set_master(versioned_context, stream, config)
+        except ValueError:
+            continue  # nothing rendered for this stream at this version
+        copied.append(stream)
+        # Best-effort: only does anything if Resolve happens to be open
+        # with a Master clip already in its Media Pool from an earlier
+        # flag - otherwise the next Import just picks up the new frames.
+        try:
+            resolve_ops.refresh_master_clip(versioned_context, stream, config)
+        except Exception:
+            pass
+
+    if not copied:
+        return 502, {"error": "no render found for v%d, nothing copied" % version}
+
+    client = _get_client()
+    client.add_comment(task_id, versioning.format_master_tag(version))
+
+    return 200, {"message": "v%d -> Master (%s)" % (version, ", ".join(copied))}
+
+
 class Handler(BaseHTTPRequestHandler):
     # The default logs every request to stderr, which is pointless noise for
     # a background process with nowhere for stderr to go.
@@ -194,7 +240,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.end_headers()
 
-    _ROUTES = {"/launch": _handle_launch, "/versions": _handle_versions}
+    _ROUTES = {"/launch": _handle_launch, "/versions": _handle_versions,
+               "/set_master": _handle_set_master}
 
     def do_GET(self):
         parsed = urlsplit(self.path)

@@ -131,6 +131,28 @@ def render_versions_for(project, sequence, shot, task):
     return workfiles.render_versions(context, RENDER_STREAM, config)
 
 
+def master_frames_for(project, sequence, shot, task):
+    '''``(pattern, first, last)`` for what is in Master right now, or None.
+
+    Same shape as one row of ``render_versions_for``, so the browser can
+    treat a Master hit exactly like any other render row once it has one.
+    '''
+    from BB_core import master as master_mod
+
+    context = build_context(task, 1, project, sequence, shot)
+    config = settings.config(project)
+    return master_mod.master_frames(context, RENDER_STREAM, config)
+
+
+def master_dir_for(project, sequence, shot, task):
+    '''The Master folder itself, for importing straight off it.'''
+    from BB_core import master as master_mod
+
+    context = build_context(task, 1, project, sequence, shot)
+    config = settings.config(project)
+    return str(master_mod.master_dir(context, RENDER_STREAM, config))
+
+
 def render_folder_for(project, sequence, shot, task, version):
     '''The folder holding one rendered version of a task, for importing.'''
     context = build_context(task, version, project, sequence, shot)

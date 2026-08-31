@@ -259,6 +259,13 @@ class KitsuPublisher:
         right_layout = QtWidgets.QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
+        # On by default - same reasoning as Nuke's browser: once a task has
+        # a flagged master, every WIP render in between is noise for the
+        # purpose of picking what to comp against.
+        self.master_only_chk = QtWidgets.QCheckBox('Master only')
+        self.master_only_chk.setChecked(bool(settings.get('master_only', True)))
+        right_layout.addWidget(self.master_only_chk)
+
         self.version_tree = QtWidgets.QTreeWidget()
         self.version_tree.setHeaderLabels(['Version', 'Detail'])
         self.version_tree.setColumnWidth(0, 70)
@@ -360,6 +367,7 @@ class KitsuPublisher:
 
         self.open_btn.clicked.connect(self.on_open)
         self.new_btn.clicked.connect(self.on_new_version)
+        self.master_only_chk.stateChanged.connect(self._on_master_only_changed)
         self.new_from_current_btn.clicked.connect(self.on_new_from_current)
         self.import_btn.clicked.connect(self.on_import)
 
@@ -760,6 +768,10 @@ class KitsuPublisher:
         self.ui_state['selected_version'] = None
         self.ui_state['render_versions'] = []
 
+    def _on_master_only_changed(self, _state=0):
+        settings.set('master_only', self.master_only_chk.isChecked())
+        self._refresh_versions()
+
     def _refresh_versions(self):
         self._reset_version_ui()
         base = self._base_for_selection()
@@ -771,6 +783,12 @@ class KitsuPublisher:
             return
 
         icon = QtGui.QIcon(self.thumb.pixmap()) if self.thumb.pixmap() else QtGui.QIcon()
+
+        # Master only means something for a rendered sequence - which one is
+        # the comp-against version - and nothing for Resolve's own project
+        # versions, where every version is just a project, not a flagged
+        # deliverable.
+        self.master_only_chk.setVisible(not state.authors(task))
 
         if state.authors(task):
             self.ui_state['version_mode'] = 'project'
@@ -790,6 +808,30 @@ class KitsuPublisher:
             except Exception:
                 has_current = False
             self.new_from_current_btn.setEnabled(has_current)
+
+        elif self.master_only_chk.isChecked():
+            self.ui_state['version_mode'] = 'render'
+            try:
+                frames = publish.master_frames_for(proj, seq, shot, task)
+            except Exception as e:
+                self.browse_status_lbl.setText('Could not check Master: %s' % e)
+                return
+
+            renders = [(0, frames[0], frames[1], frames[2])] if frames else []
+            self.ui_state['render_versions'] = renders
+            if frames:
+                master_version = None
+                if state.client and task:
+                    from BB_core import master
+                    master_version = master.current_master(state.client, task['id'])
+                name = 'Master (v%03d)' % master_version if master_version else 'Master'
+                item = QtWidgets.QTreeWidgetItem(
+                    [name, '%d frame(s)' % (frames[2] - frames[1] + 1)])
+                item.setIcon(0, icon)
+                self.version_tree.addTopLevelItem(item)
+                self.browse_status_lbl.setText('Master — click to Import')
+            else:
+                self.browse_status_lbl.setText('no master flagged yet for this task')
 
         else:
             self.ui_state['version_mode'] = 'render'
@@ -819,11 +861,16 @@ class KitsuPublisher:
                     'No rendered sequence found. Looked in:\n' + looked_in)
 
     def _on_version_clicked(self, item, _column):
-        try:
-            version = int(item.text(0).lstrip('vV'))
-        except (ValueError, AttributeError):
-            return
-        self.ui_state['selected_version'] = version
+        text = item.text(0)
+        if text.startswith('Master'):
+            # A sentinel, not a number - Master has no version of its own to
+            # reconstruct a path from, only its own already-known folder.
+            self.ui_state['selected_version'] = 'master'
+        else:
+            try:
+                self.ui_state['selected_version'] = int(text.lstrip('vV'))
+            except (ValueError, AttributeError):
+                return
         if self.ui_state['version_mode'] == 'project':
             self.open_btn.setEnabled(True)
         elif self.ui_state['version_mode'] == 'render':
@@ -905,7 +952,8 @@ class KitsuPublisher:
         self.import_btn.setEnabled(False)
         self.import_btn.setText('Importing...')
         try:
-            folder = publish.render_folder_for(proj, seq, shot, task, version)
+            folder = (publish.master_dir_for(proj, seq, shot, task) if version == 'master'
+                     else publish.render_folder_for(proj, seq, shot, task, version))
             self.log('[import] %s' % folder)
             resolve_ops.import_sequence_folder(folder, log=self.log)
             self.log('[import] done ✓')
