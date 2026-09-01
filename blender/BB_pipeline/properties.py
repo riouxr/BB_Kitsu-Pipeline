@@ -22,7 +22,7 @@ a dynamic enum callback returns - hand it a temporary list and the labels turn
 to garbage as soon as Python frees it.
 '''
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from . import session
@@ -240,6 +240,25 @@ def _on_task(self, context):
     prefs.remember(context)
 
 
+# The three Append/Link filters: exactly one or none, never more than one -
+# picking a second one is meant to replace the first, not add to it, and
+# clicking the one already on is what turns every filter back off (the file
+# browser opening as it always did) rather than needing a separate "off"
+# option sitting in the row alongside the real choices.
+_APPEND_FILTERS = ('append_all_objects', 'append_all_armatures', 'append_all_both')
+
+
+def _on_append_filter(name):
+    def update(self, context):
+        if _suspended or not getattr(self, name):
+            return
+        with suspend_updates():
+            for other in _APPEND_FILTERS:
+                if other != name:
+                    setattr(self, other, False)
+    return update
+
+
 # -- property group ------------------------------------------------------------
 
 class BB_BrowserProperties(PropertyGroup):
@@ -272,6 +291,28 @@ class BB_BrowserProperties(PropertyGroup):
 
     task: EnumProperty(name='Task', items=task_items, update=_on_task)
     version: EnumProperty(name='Version', items=version_items)
+
+    append_all_objects: BoolProperty(
+        name='All Objects',
+        description=('Append/Link every non-armature object from the '
+                     'selected version, skipping the file browser'),
+        default=False,
+        update=_on_append_filter('append_all_objects'),
+    )
+    append_all_armatures: BoolProperty(
+        name='All Armatures',
+        description=('Append/Link every armature object from the selected '
+                     'version, skipping the file browser'),
+        default=False,
+        update=_on_append_filter('append_all_armatures'),
+    )
+    append_all_both: BoolProperty(
+        name='All Obj + Armatures',
+        description=('Append/Link every object and armature from the '
+                     'selected version, skipping the file browser'),
+        default=False,
+        update=_on_append_filter('append_all_both'),
+    )
 
     comment: StringProperty(
         name='Comment',
@@ -344,6 +385,18 @@ def selected_version(context=None):
         return None
     wanted = int(props.version)
     return next((entry for entry in session.state.workfiles if entry[0] == wanted), None)
+
+
+def append_filter(context=None):
+    '''Which Append/Link filter is on, or None - the file browser opens.'''
+    props = get(context)
+    if props.append_all_objects:
+        return 'objects'
+    if props.append_all_armatures:
+        return 'armatures'
+    if props.append_all_both:
+        return 'both'
+    return None
 
 
 classes = (BB_BrowserProperties,)

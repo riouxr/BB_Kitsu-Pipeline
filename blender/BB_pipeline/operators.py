@@ -429,8 +429,20 @@ class BB_OT_browser(Operator):
 
         buttons.separator()
 
+        # One of these, or none - picking a second is meant to replace the
+        # first, not add to it (see properties._on_append_filter). None
+        # selected is the plain behaviour below: Blender's own browser opens
+        # inside the .blend to pick by hand.
+        filters = buttons.row(align=True)
+        filters.enabled = has_files
+        filters.prop(props, 'append_all_objects', text='All Objects', toggle=True)
+        filters.prop(props, 'append_all_armatures', text='All Armatures', toggle=True)
+        filters.prop(props, 'append_all_both', text='All Obj + Armatures', toggle=True)
+
         # Append and Link hand off to Blender's own browser, the only one that
-        # can descend into a .blend.
+        # can descend into a .blend - unless one of the filters above is on,
+        # in which case they skip straight to appending/linking everything it
+        # matches with no browser at all (see _LibraryLoad.execute).
         linking = buttons.row(align=True)
         linking.enabled = has_files
         linking.operator('bb.append_workfile', text='Append', icon='APPEND_BLEND')
@@ -591,6 +603,18 @@ class _LibraryLoad:
             fetch.refresh_workfiles(context)
             return {'CANCELLED'}
 
+        wanted = properties.append_filter(context)
+        if wanted is not None:
+            try:
+                count = self._bulk_load(context, path, wanted)
+            except Exception as error:
+                self.report({'ERROR'}, 'Could not %s: %s'
+                           % ('link' if self.use_link else 'append', error))
+                return {'CANCELLED'}
+            self.report({'INFO'}, '%s %d object(s)'
+                       % ('Linked' if self.use_link else 'Appended', count))
+            return {'FINISHED'}
+
         # The trailing separator is what tells Blender to open inside the
         # .blend rather than in the folder that holds it.
         inside = str(path) + os.sep
@@ -599,6 +623,33 @@ class _LibraryLoad:
                                 filepath=inside, directory=inside, filename='',
                                 display_type='THUMBNAIL'))
         return {'FINISHED'}
+
+    def _bulk_load(self, context, path, wanted):
+        '''Every object the filter asks for, with no browser at all.
+
+        ``bpy.data.libraries.load`` rather than the operator: the operator's
+        non-interactive mode has no way to hand back which objects it
+        actually created, and filtering by type - excluding or keeping only
+        armatures - has to happen after loading regardless, since an
+        object's type is not knowable from its name alone, before anything
+        is brought in.
+        '''
+        with bpy.data.libraries.load(str(path), link=self.use_link) as (data_from, data_to):
+            data_to.objects = list(data_from.objects)
+
+        target = context.collection
+        kept = 0
+        for obj in data_to.objects:
+            if obj is None:
+                continue
+            is_armature = obj.type == 'ARMATURE'
+            if ((wanted == 'objects' and is_armature)
+                    or (wanted == 'armatures' and not is_armature)):
+                bpy.data.objects.remove(obj, do_unlink=True)
+                continue
+            target.objects.link(obj)
+            kept += 1
+        return kept
 
 
 class BB_OT_append_workfile(_LibraryLoad, Operator):
