@@ -90,6 +90,12 @@ def main():
     work_root = Path(tempfile.mkdtemp(prefix="bb_work_"))
     print("work root: %s" % work_root)
 
+    # A settings file of its own, before anything can read the real one. The
+    # suite used to run against ~/.BB_pipeline/settings.json - the file the
+    # artist's Blender, Nuke and Maya all share - and every bookmark it wrote
+    # there would have become the project a real session opened on.
+    os.environ["BB_PIPELINE_SETTINGS"] = str(work_root / "settings.json")
+
     import BB_pipeline
     from BB_pipeline import fetch, properties, session, stamp
 
@@ -1001,6 +1007,101 @@ def main():
             check(properties.get().project == PROJECT["id"],
                   "opening a file that says nothing at all still comes back "
                   "to the bookmarked project (%s)" % properties.get().project)
+
+            # -- the bookmark follows the work, and survives a quit ----------
+            # Three ways it went stale. Opening a file set the selectors with
+            # bookmarking suspended, so a day spent in shots opened by Launch
+            # from Kitsu never moved it. The browser read it back from the
+            # add-on preferences, which never reach disk when Blender does not
+            # save its preferences at quit. And once the project was fixed,
+            # the shot and task still came from there - so a restart came
+            # back to the right show with nothing selected in it.
+            from BB_pipeline.BB_core import settings as bookmark_file
+
+            check(Path(bookmark_file.path())
+                  != Path.home() / ".BB_pipeline" / "settings.json",
+                  "the suite writes a settings file of its own, never the "
+                  "artist's (%s)" % bookmark_file.path())
+
+            def restart_with_stale_preferences():
+                """What a machine with Auto-Save Preferences off comes back
+                to: preferences from the last time they were saved, the
+                settings file from the last time anything was worked."""
+                for name in ("project", "sequence", "shot", "asset_type",
+                             "asset", "task"):
+                    setattr(preferences, "last_" + name, "stale-" + name)
+                preferences.last_entity_type = "SHOT"
+                return bookmark_prefs.recall()
+
+            bookmark_prefs.bookmark_project(PROJECT["id"])
+
+            # The Barcelona case: a shot in one show opened after another.
+            # Ids as well as names, the way a real stamp carries them: the
+            # bookmark is made of ids, and a context with names alone is a
+            # file recovered from its path, which has none to give.
+            shot_file = _Ctx(project="Other", group="sq010", entity="sh010",
+                             task="Lighting", entity_type="shot", version=1,
+                             project_id="pOther", group_id="sq-b",
+                             entity_id="sh-b", task_id="task-b")
+            bb_handlers.restore_selection(shot_file)
+            check(bookmark_file.get("last_project") == "pOther",
+                  "opening a file bookmarks its project (%s)"
+                  % bookmark_file.get("last_project"))
+            check(preferences.last_project == "pOther",
+                  "in the add-on preferences as well")
+
+            came_back = restart_with_stale_preferences()
+            check(came_back["project"] == "pOther",
+                  "after a restart the browser comes back to that project, "
+                  "not a stale preference (%s)" % came_back["project"])
+            check(came_back["entity_type"] == "SHOT"
+                  and came_back["sequence"] == "sq-b"
+                  and came_back["shot"] == "sh-b",
+                  "and to that shot (%s %s/%s)" % (came_back["entity_type"],
+                                                  came_back["sequence"],
+                                                  came_back["shot"]))
+            check(came_back["task"] == "task-b",
+                  "and to that task - the stamp names it, even when the "
+                  "file opened before its tasks were fetched (%s)"
+                  % came_back["task"])
+
+            asset_file = _Ctx(project="Other", group="Prop", entity="knife",
+                              task="Modeling", entity_type="asset", version=1,
+                              project_id="pOther", group_id="Prop",
+                              entity_id="knife", task_id="task-m")
+            bb_handlers.restore_selection(asset_file)
+            came_back = restart_with_stale_preferences()
+            check(came_back["entity_type"] == "ASSET"
+                  and came_back["asset_type"] == "Prop"
+                  and came_back["asset"] == "knife"
+                  and came_back["task"] == "task-m",
+                  "an asset comes back as an asset (%s %s/%s %s)"
+                  % (came_back["entity_type"], came_back["asset_type"],
+                     came_back["asset"], came_back["task"]))
+
+            # The project is shared with Nuke and Maya; the selection is not.
+            bookmark_file.save({"last_project": PROJECT["id"]})
+            came_back = restart_with_stale_preferences()
+            check(came_back["project"] == PROJECT["id"]
+                  and not came_back["asset"] and not came_back["sequence"],
+                  "a project chosen in another application comes back "
+                  "without this one's asset from a different show (%s)"
+                  % came_back)
+
+            stranger = _Ctx(project="Gone", group="g0", entity="e0", task="t0",
+                            entity_type="shot", version=1,
+                            project_id="pNotOnTheServer")
+            bb_handlers.restore_selection(stranger)
+            check(bookmark_file.get("last_project") == PROJECT["id"],
+                  "a file whose project is not on the server leaves the "
+                  "bookmark alone (%s)" % bookmark_file.get("last_project"))
+            check(bookmark_prefs.remembered_project() == PROJECT["id"],
+                  "and a file with no stamp falls back to the same project")
+
+            for name in ("sequence", "shot", "asset_type", "asset", "task"):
+                setattr(preferences, "last_" + name, "")
+            bookmark_prefs.bookmark_project(PROJECT["id"])
+            bookmark_file.save({"blender_selection": {}})
         finally:
             session.state.projects = kept_projects_2
 

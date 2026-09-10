@@ -464,23 +464,109 @@ def remember(context=None):
     if properties._suspended:
         return
 
-    for name in SELECTORS:
-        value = getattr(props, name, '')
-        # 'NONE' is the placeholder an empty dropdown carries; bookmarking it
-        # would just overwrite a good bookmark with nothing.
-        if value and value != 'NONE':
-            setattr(preferences, 'last_' + name, value)
+    bookmark_selection({name: getattr(props, name, '') for name in SELECTORS},
+                       context)
 
-    # Written through to the settings file as well, so the project cache and
-    # the Nuke side are looking at the same show as this one.
-    chosen = getattr(props, 'project', '')
-    if chosen and chosen != 'NONE':
-        try:
-            from .BB_core import settings as core_settings
-            if core_settings.get('last_project') != chosen:
-                core_settings.save({'last_project': chosen})
-        except Exception:
-            pass
+
+def bookmark_project(project_id, context=None):
+    """Make *project_id* the one a new session's browser opens on.
+
+    Written to the settings file as well as the add-on preferences, and the
+    file is the one that counts: it is saved the moment this runs, while the
+    preferences only reach disk when Blender saves its preferences. With
+    Auto-Save Preferences off - as it is on the machine this was found on -
+    they never do, and every project chosen was forgotten at quit. The file
+    is also what Nuke and Maya read, so all three agree on the show.
+    """
+    if not project_id or project_id == 'NONE':
+        return
+
+    preferences = get(context)
+    if preferences is not None and preferences.last_project != project_id:
+        preferences.last_project = project_id
+
+    try:
+        from .BB_core import settings as core_settings
+        if core_settings.get('last_project') != project_id:
+            core_settings.save({'last_project': project_id})
+    except Exception:
+        pass
+
+
+def bookmark_selection(values, context=None):
+    """Remember a whole selection - project, shot or asset, and task.
+
+    The settings file again, and for the same reason as the project: the
+    add-on preferences never reach disk on a machine that does not save its
+    preferences at quit, so a bookmark kept only there came back as whatever
+    was saved last time - a project with its show's shot forgotten.
+
+    Kept under Blender's own key rather than the flat last_sequence/last_shot
+    the Nuke browser writes to the same file. The project is shared between
+    the applications on purpose; which shot a comper had open in Nuke says
+    nothing about which asset a modeller had open here.
+    """
+    # 'NONE' is the placeholder an empty dropdown carries; bookmarking it
+    # would just overwrite a good bookmark with nothing.
+    clean = {name: value for name, value in (values or {}).items()
+             if name in SELECTORS and value and value != 'NONE'}
+    if not clean.get('project'):
+        return
+
+    preferences = get(context)
+    if preferences is not None:
+        for name, value in clean.items():
+            if getattr(preferences, 'last_' + name, None) != value:
+                setattr(preferences, 'last_' + name, value)
+
+    try:
+        from .BB_core import settings as core_settings
+        if (core_settings.get('blender_selection') != clean
+                or core_settings.get('last_project') != clean['project']):
+            core_settings.save({'blender_selection': clean,
+                                'last_project': clean['project']})
+    except Exception:
+        pass
+
+
+def bookmark_context(entity_context, context=None):
+    """Remember the selection a file names, straight from its stamp.
+
+    From the stamp rather than from the selectors, because the stamp names
+    every level and the selectors do not always land them all: a file opens
+    before its shot's tasks have been fetched, so the task selector has
+    nothing to take yet. Bookmarking only what landed kept the project and
+    lost the shot and the task.
+    """
+    if entity_context is None or not entity_context.project_id:
+        return
+    is_asset = entity_context.entity_type == 'asset'
+    bookmark_selection({
+        'project': entity_context.project_id,
+        'entity_type': 'ASSET' if is_asset else 'SHOT',
+        'asset_type' if is_asset else 'sequence': entity_context.group_id,
+        'asset' if is_asset else 'shot': entity_context.entity_id,
+        'task': entity_context.task_id,
+    }, context)
+
+
+def remembered_project(context=None):
+    """The project the browser should come back to, or ''.
+
+    The settings file first, for the reason given in bookmark_project: it is
+    current whether or not Blender ever saved its preferences. The preference
+    is only the fallback, for an install that has not written the file yet.
+    """
+    try:
+        from .BB_core import settings as core_settings
+        value = core_settings.get('last_project') or ''
+    except Exception:
+        value = ''
+    if value and value != 'NONE':
+        return value
+
+    preferences = get(context)
+    return getattr(preferences, 'last_project', '') or ''
 
 
 def recall(context=None):
@@ -488,7 +574,28 @@ def recall(context=None):
     preferences = get(context)
     if preferences is None:
         return {name: '' for name in SELECTORS}
-    return {name: getattr(preferences, 'last_' + name, '') for name in SELECTORS}
+    found = {name: getattr(preferences, 'last_' + name, '') for name in SELECTORS}
+    project = remembered_project(context)
+    if not project:
+        return found
+
+    # The file's selection when it belongs to the project being come back
+    # to - it is the one that survives a quit. The preferences only when
+    # they are for the same project. Otherwise the project alone: another
+    # show's sequence and shot would be ids that mean nothing here, and the
+    # project can differ because Nuke or Maya chose it last.
+    try:
+        from .BB_core import settings as core_settings
+        saved = core_settings.get('blender_selection') or {}
+    except Exception:
+        saved = {}
+    if isinstance(saved, dict) and saved.get('project') == project:
+        return {name: saved.get(name, '') for name in SELECTORS}
+    if found['project'] == project:
+        return found
+    blank = {name: '' for name in SELECTORS}
+    blank['project'] = project
+    return blank
 
 
 def kitsu_sources(context=None):
@@ -614,23 +721,13 @@ def _selected_project(context=None):
         if found is not None:
             return found
 
-    # The add-on's own bookmark next. This is where Blender keeps the last
-    # project - the settings file is Nuke's - and reading only the latter
-    # meant the fallback looked at a value Blender never writes, so a file
-    # with no stamp had no project at all once the load wiped the
+    # The bookmark next - the last project actually worked in, a file with
+    # no stamp having no project of its own once the load wiped the
     # selectors.
-    remembered = ''
     try:
-        preferences = get(context)
-        remembered = getattr(preferences, 'last_project', '') or ''
+        remembered = remembered_project(context)
     except Exception:
         remembered = ''
-
-    if not remembered:
-        try:
-            remembered = core_settings.get('last_project') or ''
-        except Exception:
-            remembered = ''
 
     if remembered:
         try:

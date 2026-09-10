@@ -18,7 +18,7 @@ def _restore_project_bookmark(context=None):
     props = properties.get(context)
 
     preferences = prefs.get(context)
-    wanted = getattr(preferences, 'last_project', '') if preferences else ''
+    wanted = prefs.remembered_project(context) if preferences else ''
     if not wanted or props.project == wanted:
         return
 
@@ -61,24 +61,43 @@ def restore_selection(entity_context, context=None):
     groups = state.asset_types if is_asset else state.sequences
     entities = state.assets if is_asset else state.shots
 
-    with properties.suspend_updates():
-        props.project = entity_context.project_id
-        props.entity_type = 'ASSET' if is_asset else 'SHOT'
+    def point():
+        with properties.suspend_updates():
+            props.project = entity_context.project_id
+            props.entity_type = 'ASSET' if is_asset else 'SHOT'
 
-        if not any(g['id'] == entity_context.group_id for g in groups):
-            return False
-        setattr(props, 'asset_type' if is_asset else 'sequence',
-                entity_context.group_id)
+            if not any(g['id'] == entity_context.group_id for g in groups):
+                return False
+            setattr(props, 'asset_type' if is_asset else 'sequence',
+                    entity_context.group_id)
 
-        if not any(e['id'] == entity_context.entity_id for e in entities):
-            return False
-        setattr(props, 'asset' if is_asset else 'shot', entity_context.entity_id)
+            if not any(e['id'] == entity_context.entity_id for e in entities):
+                return False
+            setattr(props, 'asset' if is_asset else 'shot',
+                    entity_context.entity_id)
 
-        if not any(t['id'] == entity_context.task_id for t in state.tasks):
-            return False
-        props.task = entity_context.task_id
+            if not any(t['id'] == entity_context.task_id for t in state.tasks):
+                return False
+            props.task = entity_context.task_id
+        return True
 
-    return True
+    landed = point()
+
+    # Opening a file is working in its project, and the browser should come
+    # back to it. The selectors are set above with bookmarking suspended -
+    # right for the blank states they pass through, wrong for where they end
+    # up - so a file opened by Launch from Kitsu, which never goes near the
+    # browser, left the bookmark on whatever show was last picked by hand.
+    #
+    # Only the project the file itself names, and only once it has landed:
+    # a load resets the selector to whichever project sorts first, and
+    # bookmarking that would be the very bug the bookmark exists to undo.
+    if props.project == entity_context.project_id:
+        # All of it, from the stamp - which names every level even when the
+        # selectors could not land them all yet.
+        prefs.bookmark_context(entity_context, context)
+
+    return landed
 
 
 @persistent

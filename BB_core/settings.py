@@ -46,10 +46,24 @@ DEFAULTS = {
     "kitsu_normalize": False,
     "still_format": "PNG",
     # Where the browser was left, so it opens where you were.
+    #
+    # Every key a host saves has to be listed here: load() and save() keep
+    # only the keys this dict names, and drop the rest without a word. That
+    # is how Blender's selection, the Maya browser's group and entity, and
+    # Nuke's Master-only switch were each written on every change and read
+    # back as nothing - the file never held them.
     "last_project": "",
     "last_sequence": "",
     "last_shot": "",
     "last_task": "",
+    # The Maya browser's two levels, which cover a shot or an asset alike.
+    "last_group": "",
+    "last_entity": "",
+    # Blender's whole selection - project, shot or asset, and task - under a
+    # key of its own. The project is shared across the applications; which
+    # asset a modeller had open is not something Nuke's shot should overwrite.
+    "blender_selection": {},
+    "master_only": True,
 }
 
 

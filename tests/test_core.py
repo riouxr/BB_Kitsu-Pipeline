@@ -1101,6 +1101,62 @@ class TestSiblingModuleNames(unittest.TestCase):
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
 
+class TestSavedKeysAreKept(unittest.TestCase):
+    """A key a host writes to the settings file has to be one the file keeps.
+
+    load() and save() keep only the keys DEFAULTS names and drop the rest
+    without a word, so a key missing from it is written on every change and
+    read back as nothing. Blender's remembered selection, the Maya browser's
+    group and entity, and Nuke's Master-only switch all went that way, each
+    looking like a feature that simply did not remember.
+    """
+
+    HOSTS = ("blender/BB_pipeline", "nuke/BB_pipeline_nuke",
+             "maya/BB_pipeline_maya", "resolve/BB_pipeline_resolve",
+             "launcher")
+    SET = re.compile(r"settings\.set\(\s*['\"]([A-Za-z_]+)['\"]")
+    SAVE = re.compile(r"settings\.save\(\s*\{([^}]*)\}", re.S)
+    KEY = re.compile(r"['\"]([A-Za-z_]+)['\"]\s*:")
+
+    def test_every_saved_key_is_kept(self):
+        from BB_core import settings
+
+        known = set(settings.DEFAULTS)
+        dropped = []
+        for host in self.HOSTS:
+            for path in sorted((REPO / host).rglob("*.py")):
+                if "node_modules" in path.parts:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                keys = set(self.SET.findall(text))
+                for body in self.SAVE.findall(text):
+                    keys.update(self.KEY.findall(body))
+                for key in sorted(keys - known):
+                    dropped.append("%s saves %r" % (
+                        path.relative_to(REPO).as_posix(), key))
+        self.assertEqual(dropped, [],
+                         "settings.save() silently drops keys missing from "
+                         "DEFAULTS - add these there:\n  " + "\n  ".join(dropped))
+
+    def test_a_saved_selection_comes_back(self):
+        """The round trip itself, for the key that started this."""
+        from BB_core import settings
+
+        with tempfile.TemporaryDirectory() as folder:
+            previous = os.environ.get(settings.ENV_VAR)
+            os.environ[settings.ENV_VAR] = os.path.join(folder, "settings.json")
+            try:
+                wanted = {"project": "p1", "entity_type": "ASSET",
+                          "asset_type": "Prop", "asset": "knife", "task": "t1"}
+                settings.save({"blender_selection": wanted})
+                self.assertEqual(settings.get("blender_selection"), wanted)
+            finally:
+                if previous is None:
+                    os.environ.pop(settings.ENV_VAR, None)
+                else:
+                    os.environ[settings.ENV_VAR] = previous
+
+
 class TestSelfAttributesAreAssigned(unittest.TestCase):
     """Attributes read off self that nothing in the class ever sets.
 
