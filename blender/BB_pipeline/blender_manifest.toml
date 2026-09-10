@@ -10,7 +10,7 @@ type = "add-on"
 # 4.2 is the first release with the extension system, and its bundled Python
 # is 3.11 - which is also the first with tomllib, so the config loader needs
 # nothing extra. Kitsu access rides on the requests Blender already ships.
-blender_version_min = "4.2.0"
+blender_version_min = "4.5.0"
 
 license = [
   "SPDX:GPL-3.0-or-later",

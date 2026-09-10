@@ -88,7 +88,7 @@ each DCC needs beyond the repo itself:
 
 | | Requires | Install | Run |
 |---|---|---|---|
-| **Blender** | Blender 4.2+ | `python tools/build_extension.py`, then **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk** with the zip it produces | opens with Blender |
+| **Blender** | Blender 4.5+ | `python tools/build_extension.py`, then **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk** with the zip it produces | opens with Blender |
 | **Maya** | Maya 2025+ (PySide6, Python 3.11) | `python maya/install.py` — writes a module file into Maya's modules folder | **Kitsu** menu appears after restart |
 | **Nuke** | Nuke 16+ | `"path/to/Nuke's python.exe" nuke/install.py` — patches `~/.nuke/menu.py` | **Kitsu** menu appears after restart |
 | **Resolve** | **Resolve Studio** (the free version has no external scripting API), and **PySide6 or PySide2** pip-installed in whichever Python runs the launcher | copy `resolve/kitsu_resolve_publisher.py`, `resolve/BB_pipeline_resolve/` and `BB_core/` anywhere — not `Scripts/Comp` | `python kitsu_resolve_publisher.py`, as its own process, with Resolve already running and a project open — **never** through Workspace ▸ Scripts (see the Resolve section below for why) |
@@ -104,7 +104,9 @@ Just ask Claude Code to install it for you. ;-)
 
 ## Blender add-on
 
-Requires Blender 4.2 or newer. No wheels and nothing to pip install: Kitsu
+Requires Blender 4.5 or newer — the playblast needs the viewport render to
+run as a job it can watch, which 4.2 does not do (see below). No wheels and
+nothing to pip install: Kitsu
 access rides on the `requests` Blender already bundles, and passwords go
 straight to the Windows Credential Manager through `ctypes`.
 
@@ -464,12 +466,47 @@ the scene file:
 |---|---|
 | **Render Image** | the current frame |
 | **Render Animation** | the frame range, EXR |
-| **Render Playblast** | OpenGL pass of the range, straight to H.264 |
+| **Render Playblast** | OpenGL pass of the range, as PNG frames |
 
 ```
-<render root>/<seq>/<shot>/<task>/internalRender/main/<name_v003>/<name_v003>.1001.exr
-                                                     /playblast/<name_v003>.mp4
+<render root>/<seq>/<shot>/<task>/Render/v003/<name_v003>.1001.exr
+                                  /Render/playblast/v003/<name_v003>.1001.png
 ```
+
+**A playblast is frames, not a movie.** It used to go straight to H.264 on the
+grounds that nothing downstream wanted the frames — but BB AnimViewer is a
+frame flipbook and cannot play a movie, and **Submit to Kitsu** builds the
+H.264 out of frames anyway. So the frames are what both actually want. The
+`[streams.playblast]` `ext` in the config decides; set it to `mp4` to get one
+movie file straight out instead.
+
+**A playblast leaves the scene exactly as it found it.** Two bugs used to break
+this, and both are worth knowing about if a render ever comes out in the wrong
+format:
+
+- A viewport render fires **no render handlers at all** — not `render_complete`,
+  not `render_cancel` — on any Blender from 4.2 to 5.2. The restore was queued
+  on those handlers, so it never ran: the scene stayed on H.264, and the queued
+  snapshot was applied after whatever render came *next*, so a Ctrl+F12 of the
+  real sequence wrote a movie. From 4.5 the viewport render is a `RENDER` job,
+  so the add-on watches `bpy.app.is_job_running` and restores the moment it
+  ends; the UI stays live and Esc still cancels.
+- The snapshot saved the file format and nothing else. Blender coerces bit
+  depth and colour mode whenever the format changes, so an EXR that went
+  through a playblast came back **half float instead of full float**, or **RGB
+  with its alpha gone**. Every writable image setting is saved now.
+
+**BB AnimViewer's Open Render Output finds it.** The scene's output path names
+the main render folder, so a viewer following it lands in an empty folder
+right after a playblast. The add-on gives every scene a read-only
+`bb_render_output`: the folder holding the newest frames across every stream
+and version of the task, read off the disk each time, so it is right after a
+restart too. AnimViewer asks for it by name and falls back to the output path
+when it is not there — neither add-on imports the other.
+
+The playblast also forces the film opaque while it runs. A transparent film
+turns a camera view's background black, in the frames and in the movie built
+from them — the same thing that blacked out version thumbnails.
 
 Blender opens the result in its render window, and that window's sidebar
 (`N` ▸ **Kitsu**) carries a comment box, a task status and **Submit to Kitsu**.
@@ -1203,7 +1240,7 @@ panel when its draw callback raises, reporting nothing:
 Each was written after the bug it describes reached a running DCC, and each is
 verified to fail when that bug is put back.
 
-Verified against Blender 4.2, 4.5, 5.1 and 5.2, Nuke 16.0v6, and
+Verified against Blender 4.5, 5.0, 5.1 and 5.2, Nuke 16.0v6, and
 Maya 2026.
 
 ## Licence

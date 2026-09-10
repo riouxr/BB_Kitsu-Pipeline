@@ -121,11 +121,14 @@ ext = "mov"
 colorspace = "Output - Rec.709"
 burn_in = true
 
-# Viewport playblasts. Rendered straight to H.264 because nothing downstream
-# needs the frames, and H.264 is what Kitsu re-encodes everything to anyway.
+# Viewport playblasts, as a PNG sequence. This used to be H.264 on the grounds
+# that nothing downstream needed the frames - but BB AnimViewer flips through
+# frames and cannot play a movie, and the Kitsu Review panel builds the H.264
+# for Kitsu out of frames anyway. Set "mp4" to get one movie file straight
+# out instead; the Blender side reads this rather than assuming either.
 [streams.playblast]
 folder = "playblast"
-ext = "mp4"
+ext = "png"
 colorspace = "Output - Rec.709"
 
 [streams.matte]

@@ -574,10 +574,205 @@ def main():
         _, blast_stream, blast_dir, _, blast_settings = render.target(
             bpy.context, render.PLAYBLAST)
         check(blast_stream == "playblast", "a playblast has its own stream")
-        check(blast_settings.get("ext") == "mp4",
-              "playblasts are H.264 from the start")
+        check(blast_settings.get("ext") == "png",
+              "playblasts are a PNG sequence, which AnimViewer can play")
+        check(not render.is_movie(blast_settings),
+              "and are frames rather than one movie file")
         check(Path(blast_dir) != Path(directory),
               "a playblast does not overwrite the render")
+
+        # -- a playblast leaves the scene exactly as it found it -----------------
+        # Two bugs, both measured. The restore only saved the file format, and
+        # Blender coerces depth and colour mode whenever the format changes, so
+        # an EXR came back half float, or RGB with its alpha gone. And the
+        # restore was queued on render handlers a viewport render never fires,
+        # so it did not run at all - the next real render went out as H.264.
+        scene = bpy.context.scene
+        image = scene.render.image_settings
+        if hasattr(image, "media_type"):
+            image.media_type = "IMAGE"
+        image.file_format = "OPEN_EXR"
+        image.color_mode = "RGBA"
+        image.color_depth = "32"
+        image.exr_codec = "ZIP"
+        scene.render.film_transparent = True
+        scene.render.filepath = "//keep_me_"
+
+        def settings_now():
+            """Every writable image setting, read here rather than through
+            render._image_state - a check that measures with the function it
+            is checking passes whatever that function does."""
+            found = {}
+            for prop in image.bl_rna.properties:
+                if (prop.identifier == "rna_type" or prop.is_readonly
+                        or prop.type in ("POINTER", "COLLECTION")):
+                    continue
+                try:
+                    found[prop.identifier] = getattr(image, prop.identifier)
+                except Exception:
+                    continue
+            return found
+
+        before = settings_now()
+
+        saved = render._apply_output(scene, render.PLAYBLAST, Path(blast_dir),
+                                     "0070_v003", blast_settings)
+        check(image.file_format == "PNG" and image.color_mode == "RGB",
+              "a playblast writes opaque PNG frames (%s %s)"
+              % (image.file_format, image.color_mode))
+        check(not scene.render.film_transparent,
+              "on an opaque film, so the camera view is not blacked out")
+        check(scene.render.filepath.endswith("0070_v003."),
+              "numbered frame by frame (%s)" % Path(scene.render.filepath).name)
+
+        render._restore(scene, saved)
+        after = settings_now()
+        lost = {k: (before[k], after.get(k)) for k in before
+                if before[k] != after.get(k)}
+        check(not lost, "every image setting comes back afterwards (%s)"
+              % (lost or "all of them"))
+        check(image.color_depth == "32" and image.color_mode == "RGBA",
+              "so the EXR is still full float and still has its alpha")
+        check(scene.render.film_transparent,
+              "and the film is transparent again")
+        check(scene.render.filepath == "//keep_me_", "and the output path is back")
+
+        movie_saved = render._apply_output(scene, render.PLAYBLAST,
+                                           Path(blast_dir), "0070_v003",
+                                           {"ext": "mp4"})
+        check(image.file_format == "FFMPEG",
+              "a stream set to mp4 still gets one movie file")
+        render._restore(scene, movie_saved)
+        check(settings_now() == before,
+              "and is put back just as completely (%s)"
+              % ({k: v for k, v in settings_now().items()
+                  if before.get(k) != v} or "all of them"))
+
+        # -- the restore waits for the render job, not for a handler --------------
+        # A viewport render fires no render handler at all, so the playblast is
+        # watched through bpy.app.is_job_running instead. There is no window
+        # here to invoke a real one into, so Blender is stood in for, and the
+        # timer is driven by hand.
+        class _Shim:
+            """Enough of bpy for _run_playblast, with the job under our control."""
+
+            def __init__(self, running_after_invoke):
+                self.job = False
+                self.running_after_invoke = running_after_invoke
+                self.timers = []
+                self.invoked = []
+                shim = self
+
+                class _Ops:
+                    class render:
+                        @staticmethod
+                        def opengl(*args, **kwargs):
+                            shim.invoked.append(args)
+                            shim.job = shim.running_after_invoke
+
+                class _App:
+                    background = False
+                    version = bpy.app.version
+
+                    class timers:
+                        @staticmethod
+                        def register(function, first_interval=0.0):
+                            shim.timers.append(function)
+
+                    @staticmethod
+                    def is_job_running(kind):
+                        return shim.job
+
+                self.ops = _Ops()
+                self.app = _App()
+                self.context = bpy.context
+                self.data = bpy.data
+
+        def playblast_through(shim):
+            # Left installed on purpose: the watch reads is_job_running when
+            # the timer fires, not when it is set, so swapping the real bpy
+            # back here would answer every later check with Blender's own
+            # "no job" and restore early.
+            render.bpy = shim
+            saved = render._apply_output(scene, render.PLAYBLAST,
+                                         Path(blast_dir), "0070_v003",
+                                         blast_settings)
+            render._run_playblast(scene, saved, interactive=True)
+
+        real_bpy = render.bpy
+        try:
+            shim = _Shim(running_after_invoke=True)
+            playblast_through(shim)
+            check(shim.invoked and shim.invoked[0] == ("INVOKE_DEFAULT",),
+                  "an interactive playblast is invoked, so the UI stays live")
+            check(image.file_format == "PNG",
+                  "and nothing is restored while its job is still running")
+            check(len(shim.timers) == 1, "a watch is set on the job")
+
+            watch = shim.timers[0] if shim.timers else (lambda: "no watch")
+            again = watch()
+            check(again == render.WATCH_INTERVAL and image.file_format == "PNG",
+                  "which keeps waiting while the job runs")
+            shim.job = False
+            check(watch() is None, "and stops once the job has ended")
+            check(settings_now() == before,
+                  "putting every setting back at that point")
+            check(session.state.render_restore is None,
+                  "without leaving a restore queued for the next render to apply")
+
+            shim = _Shim(running_after_invoke=False)
+            playblast_through(shim)
+            check(not shim.timers and settings_now() == before,
+                  "a playblast whose job never started is restored at once")
+        finally:
+            render.bpy = real_bpy
+
+        scene.render.film_transparent = False
+
+        # -- the newest frames, wherever they were filed -----------------------
+        # A viewer that follows the scene's output path cannot find a playblast:
+        # the path names the main render, and the playblast sits beside it. So
+        # the scene answers "where are the newest frames" itself, off the disk,
+        # across every stream and version - render then playblast, playblast
+        # then render, or a fresh version with nothing in it yet.
+        import time as _time
+
+        check(hasattr(bpy.types.Scene, "bb_render_output"),
+              "the scene can say where its newest frames are")
+
+        main_dir = Path(directory)
+        blast_folder = Path(blast_dir)
+        for folder in (main_dir, blast_folder):
+            folder.mkdir(parents=True, exist_ok=True)
+        main_frame = main_dir / "0070_v003.1001.exr"
+        blast_frame = blast_folder / "0070_v003.1001.png"
+        main_frame.write_bytes(b"exr")
+        blast_frame.write_bytes(b"png")
+
+        now = _time.time()
+        os.utime(main_frame, (now - 60, now - 60))
+        os.utime(blast_frame, (now, now))
+        check(Path(scene.bb_render_output) == blast_folder,
+              "a playblast made after the render is the one offered (%s)"
+              % Path(scene.bb_render_output).name)
+
+        os.utime(main_frame, (now + 60, now + 60))
+        check(Path(scene.bb_render_output) == main_dir,
+              "and a render made after the playblast takes over (%s)"
+              % Path(scene.bb_render_output).name)
+
+        stamp.write(scene, shot_ctx.at_version(4))
+        check(Path(scene.bb_render_output) == main_dir,
+              "a new version with nothing rendered yet still finds the last "
+              "thing that was (%s)" % Path(scene.bb_render_output))
+        stamp.write(scene, shot_ctx.at_version(3))
+
+        main_frame.unlink()
+        blast_frame.unlink()
+        leftover = scene.bb_render_output
+        check(not leftover or not any(
+                  Path(leftover).glob("0070_v003.*")),
+              "and with nothing rendered anywhere it offers no stale folder")
 
         # A stamp that has been lost is not fatal for rendering: the filename
         # still parses, and rendering needs a version, not Kitsu ids. It is

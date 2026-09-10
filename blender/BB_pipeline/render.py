@@ -5,8 +5,11 @@ Three ways out of Blender, all filed the same way:
 * **Image** - the current frame, for a look-dev check or a still.
 * **Animation** - the frame range, EXR by default because that is what the
   rest of a VFX pipeline expects to be handed.
-* **Playblast** - an OpenGL pass straight to H.264, because nothing
-  downstream wants playblast frames and Kitsu re-encodes to H.264 anyway.
+* **Playblast** - an OpenGL pass to a PNG sequence. Frames, not a movie:
+  BB AnimViewer flips through frames, and the Kitsu Review panel already
+  builds the H.264 for Kitsu out of them, so a movie written here could be
+  neither viewed nor usefully re-published. The stream's ``ext`` decides, so
+  a studio that wants a movie straight out can still set ``mp4``.
 
 The output path is never typed in. It comes off the same
 :class:`EntityContext` that named the scene file, so a render is always filed
@@ -14,7 +17,9 @@ under the version that produced it - the rule the whole pipeline hangs on.
 
 Every render setting touched here is restored afterwards. A render that
 quietly leaves the scene writing EXRs into a temp folder would be a nasty
-thing to discover a week later.
+thing to discover a week later - and the playblast did exactly that, the
+other way round, for as long as it waited on Blender to say the render had
+finished. See :func:`_run_playblast`.
 '''
 import os
 from pathlib import Path
@@ -30,42 +35,91 @@ PLAYBLAST = 'PLAYBLAST'
 
 STREAMS = {IMAGE: 'main', ANIMATION: 'main', PLAYBLAST: 'playblast'}
 
+# Extensions that mean one movie file rather than a folder of frames.
+MOVIES = ('mp4', 'mov', 'mkv', 'avi')
+
+# Blender's name for each still format a stream can ask for.
+FORMATS = {'exr': 'OPEN_EXR', 'png': 'PNG', 'jpg': 'JPEG', 'jpeg': 'JPEG',
+           'tif': 'TIFF', 'tiff': 'TIFF'}
+
+# How often a running playblast is checked on.
+WATCH_INTERVAL = 0.25
+
+# Restored before everything else, in this order. Setting the format coerces
+# depth and colour mode to suit it, so those have to go back after it or the
+# coercion wins.
+_FORMAT_FIRST = ('media_type', 'file_format', 'color_mode', 'color_depth')
+
 
 class RenderSetup(Exception):
     '''The render cannot be set up - no context, no root, no stream.'''
 
 
+def _image_state(image):
+    """Every writable setting on an ImageFormatSettings, by name.
+
+    Read off Blender's own description of the struct rather than kept as a
+    list here. The list this replaced saved the file format and nothing else,
+    and Blender quietly coerces bit depth and colour mode whenever the format
+    changes - so an EXR that had been through a playblast came back half float
+    instead of full float, or RGB instead of RGBA with its alpha gone from
+    every render after. Measured, on 4.2 and 5.2 alike.
+    """
+    kept = {}
+    for prop in image.bl_rna.properties:
+        if (prop.identifier == 'rna_type' or prop.is_readonly
+                or prop.type in ('POINTER', 'COLLECTION')):
+            continue
+        try:
+            kept[prop.identifier] = getattr(image, prop.identifier)
+        except Exception:
+            continue
+    return kept
+
+
+def _put_back_image(image, kept):
+    ordered = [name for name in _FORMAT_FIRST if name in kept]
+    ordered += [name for name in kept if name not in _FORMAT_FIRST]
+    for name in ordered:
+        try:
+            setattr(image, name, kept[name])
+        except Exception:
+            # Not valid for the format just restored - Blender offers some
+            # settings only for some formats. Nothing to put back.
+            continue
+
+
 def _restore(scene, saved):
     render = scene.render
-    image = render.image_settings
 
     render.filepath = saved['filepath']
     render.use_file_extension = saved['use_file_extension']
     render.use_overwrite = saved['use_overwrite']
-    if 'media_type' in saved and hasattr(image, 'media_type'):
-        image.media_type = saved['media_type']
-    image.file_format = saved['file_format']
-    if saved.get('codec') is not None:
-        render.ffmpeg.codec = saved['codec']
-        render.ffmpeg.format = saved['container']
+    render.film_transparent = saved['film_transparent']
+    _put_back_image(render.image_settings, saved['image'])
+    for name, value in saved['ffmpeg'].items():
+        try:
+            setattr(render.ffmpeg, name, value)
+        except Exception:
+            continue
 
 
 def _snapshot(scene):
     render = scene.render
-    image = render.image_settings
-    saved = {
+    return {
         'filepath': render.filepath,
         'use_file_extension': render.use_file_extension,
         'use_overwrite': render.use_overwrite,
-        'file_format': image.file_format,
-        'codec': render.ffmpeg.codec,
-        'container': render.ffmpeg.format,
+        'film_transparent': render.film_transparent,
+        'image': _image_state(render.image_settings),
+        'ffmpeg': {name: getattr(render.ffmpeg, name)
+                   for name in ('format', 'codec', 'audio_codec')},
     }
-    # Blender 5 splits stills from movies behind media_type; 4.x has no such
-    # property and picks the format from file_format alone.
-    if hasattr(image, 'media_type'):
-        saved['media_type'] = image.media_type
-    return saved
+
+
+def is_movie(settings):
+    """True when a stream is written as one movie file rather than frames."""
+    return (settings.get('ext') or '').lower() in MOVIES
 
 
 def target(context, kind):
@@ -114,7 +168,14 @@ def _apply_output(scene, kind, directory, stem, settings):
     render.use_overwrite = True
 
     if kind == PLAYBLAST:
-        # One movie file, not a folder of frames.
+        # A playblast is a look at the viewport, and a transparent film turns
+        # the camera view's background black - in the frames, and in the
+        # movie the Review panel builds from them. Version thumbnails went
+        # black the same way until capture.py forced it off.
+        render.film_transparent = False
+
+    if kind == PLAYBLAST and is_movie(settings):
+        # One movie file, for a studio that has asked for one.
         if hasattr(image, 'media_type'):
             image.media_type = 'VIDEO'
         image.file_format = 'FFMPEG'
@@ -123,6 +184,19 @@ def _apply_output(scene, kind, directory, stem, settings):
         render.ffmpeg.audio_codec = 'NONE'
         render.use_file_extension = True
         render.filepath = str(directory / stem)
+        return saved
+
+    if kind == PLAYBLAST:
+        # Frames, in whatever still format the stream names - PNG by default.
+        if hasattr(image, 'media_type'):
+            image.media_type = 'IMAGE'
+        image.file_format = FORMATS.get(
+            (settings.get('ext') or 'png').lower(), 'PNG')
+        # Opaque, to match the film just set: an alpha channel here would only
+        # ever hold the empty background.
+        image.color_mode = 'RGB'
+        render.use_file_extension = True
+        render.filepath = str(directory / (stem + '.'))
         return saved
 
     extension = (settings.get('ext') or 'exr').lower()
@@ -165,7 +239,7 @@ def run(context, kind):
         'frame_start': scene.frame_start,
         'frame_end': scene.frame_end,
         'frame': scene.frame_current,
-        'movie': kind == PLAYBLAST,
+        'movie': kind == PLAYBLAST and is_movie(settings),
     }
 
     # INVOKE_DEFAULT hands the render to a job thread and opens the render
@@ -174,16 +248,18 @@ def run(context, kind):
     # immediately.
     interactive = not bpy.app.background
 
+    if kind == PLAYBLAST:
+        _run_playblast(scene, saved, interactive)
+        return '%s -> %s' % (stem, directory)
+
     if interactive:
         session.state.render_restore = (scene, saved)
 
     try:
         if kind == IMAGE:
             _call(bpy.ops.render.render, interactive, write_still=True)
-        elif kind == ANIMATION:
-            _call(bpy.ops.render.render, interactive, animation=True)
         else:
-            _call(bpy.ops.render.opengl, interactive, animation=True)
+            _call(bpy.ops.render.render, interactive, animation=True)
     finally:
         if not interactive:
             session.state.render_restore = None
@@ -191,6 +267,58 @@ def run(context, kind):
             _restore(scene, saved)
 
     return '%s -> %s' % (stem, directory)
+
+
+def _run_playblast(scene, saved, interactive):
+    """Render the playblast, and put the scene back once it is done.
+
+    Not through the render handlers the other two kinds rely on. A viewport
+    render fires none of them - render_init, pre, post, complete and cancel
+    all stay silent, measured on every Blender from 4.2 to 5.2 - so the
+    restore queued for it never ran. The scene stayed on H.264, and the
+    snapshot sat waiting to be applied after whatever render came next: a
+    Ctrl+F12 of the real sequence rendered with the playblast's settings,
+    wrote a movie, and only then put the old settings back.
+
+    A viewport render is a RENDER job from 4.5 on, true the moment it starts
+    and false the moment it ends, so it is watched until then. The UI stays
+    live and Esc still cancels - a cancel ends the job the same way.
+    """
+    if not interactive:
+        # No window to invoke into - a farm, or a test. Inline, and restored
+        # the moment it returns.
+        try:
+            bpy.ops.render.opengl(animation=True)
+        finally:
+            _finish_playblast(scene, saved)
+        return
+
+    bpy.ops.render.opengl('INVOKE_DEFAULT', animation=True)
+
+    # False here means the job never started - refused, or over already -
+    # and there is nothing to wait for.
+    if not bpy.app.is_job_running('RENDER'):
+        _finish_playblast(scene, saved)
+        return
+
+    def check():
+        if bpy.app.is_job_running('RENDER'):
+            return WATCH_INTERVAL
+        _finish_playblast(scene, saved)
+        return None
+
+    # Not persistent: loading another file mid-playblast takes this scene
+    # away, and with it anything there was to restore.
+    bpy.app.timers.register(check, first_interval=WATCH_INTERVAL)
+
+
+def _finish_playblast(scene, saved):
+    tidy_movie_name(session.state.last_render)
+    try:
+        _restore(scene, saved)
+    except ReferenceError:
+        # The scene went away with a file load; nothing left to restore.
+        pass
 
 
 def _call(operator, interactive, **arguments):
@@ -314,11 +442,115 @@ def _finished(*args):
         pass
 
 
+# -- where the newest frames are -----------------------------------------------
+
+# What counts as a rendered frame when comparing folders by recency.
+_FRAME_EXTENSIONS = ('.exr', '.png', '.jpg', '.jpeg', '.tif', '.tiff')
+
+
+def _newest_frame(folder):
+    """The modification time of the newest frame in *folder*, or -1."""
+    newest = -1.0
+    try:
+        entries = os.scandir(folder)
+    except OSError:
+        return newest
+    with entries:
+        for entry in entries:
+            if not entry.name.lower().endswith(_FRAME_EXTENSIONS):
+                continue
+            try:
+                stamp_time = entry.stat().st_mtime
+            except OSError:
+                continue
+            if stamp_time > newest:
+                newest = stamp_time
+    return newest
+
+
+def _scene_output_folder(scene):
+    path = bpy.path.abspath(scene.render.filepath or '')
+    if not path:
+        return ''
+    if path.endswith(('/', chr(92))) or os.path.isdir(path):
+        return path
+    return os.path.dirname(path)
+
+
+def latest_output(scene=None):
+    """The folder holding the most recently rendered frames for this scene.
+
+    The scene's own output path names one folder - the main render for the
+    open version - and a viewer that only looks there cannot find a
+    playblast, which this pipeline files beside the render rather than in
+    it. So every stream and every version this task has rendered is a
+    candidate, and so is whatever the output path names, and the folder
+    whose newest frame is newest wins. A playblast just made beats last
+    week's render; a version saved a moment ago with nothing rendered yet
+    still finds the last thing that was.
+
+    Read off the disk each time rather than remembered, so it is still right
+    after a restart. Returns '' when there is nothing rendered anywhere.
+    """
+    scene = scene or bpy.context.scene
+    if scene is None:
+        return ''
+
+    candidates = set()
+    own = _scene_output_folder(scene)
+    if own:
+        candidates.add(os.path.normpath(own))
+
+    entity_context = stamp.read(scene)
+    if entity_context is None and scene == bpy.context.scene:
+        entity_context = stamp.read_current()[0]
+
+    if entity_context is not None and entity_context.is_complete():
+        try:
+            config = prefs.config()
+            workfiles = session.workfiles_module
+            for stream in config.streams:
+                for _version, pattern, _first, _last in workfiles.render_versions(
+                        entity_context, stream, config):
+                    candidates.add(os.path.normpath(os.path.dirname(pattern)))
+        except Exception as error:
+            print('BB Kitsu Pipeline: could not list renders (%s)' % error)
+
+    best, newest = '', -1.0
+    for folder in candidates:
+        stamp_time = _newest_frame(folder)
+        if stamp_time > newest:
+            best, newest = folder, stamp_time
+    return best if newest >= 0 else ''
+
+
+def _render_output_get(scene):
+    # An RNA getter: whatever it raises is printed on every read and the
+    # read returns nothing useful, so nothing is allowed to escape.
+    try:
+        return latest_output(scene)
+    except Exception as error:
+        print('BB Kitsu Pipeline: latest render lookup failed (%s)' % error)
+        return ''
+
+
 def register():
     for handler in (bpy.app.handlers.render_complete,
                     bpy.app.handlers.render_cancel):
         if _finished not in handler:
             handler.append(_finished)
+
+    # Read-only and computed on every read, so it is never saved into the
+    # .blend and never marks it modified. It is the one thing BB AnimViewer's
+    # Open Render Output asks for, by name - no import either way, and a
+    # viewer running without this add-on simply finds no such property and
+    # falls back to the scene's output path.
+    bpy.types.Scene.bb_render_output = bpy.props.StringProperty(
+        name='Latest Render',
+        description=('The folder holding the most recently rendered frames '
+                     'for this scene - render or playblast, any version'),
+        get=_render_output_get,
+    )
 
 
 def unregister():
@@ -326,3 +558,6 @@ def unregister():
                     bpy.app.handlers.render_cancel):
         if _finished in handler:
             handler.remove(_finished)
+
+    if hasattr(bpy.types.Scene, 'bb_render_output'):
+        del bpy.types.Scene.bb_render_output
