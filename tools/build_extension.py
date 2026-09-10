@@ -77,10 +77,21 @@ def main():
             [blender, "--command", "extension", "build",
              "--source-dir", str(source),
              "--output-dir", str(output)],
-            capture_output=True, text=True,
+            # Blender writes UTF-8; read as the Windows default, one byte of it
+            # killed the reader thread, left stdout as None and printed a
+            # traceback over a build that had in fact succeeded - the kind of
+            # noise that hides the day a build really does fail.
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        sys.stdout.write(result.stdout)
-        sys.stderr.write(result.stderr)
+        # And the same on the way out: a console on the Windows code page
+        # cannot print every character Blender can, which is no reason to
+        # stop a build to say so.
+        for stream, text in ((sys.stdout, result.stdout), (sys.stderr, result.stderr)):
+            try:
+                stream.reconfigure(errors="replace")
+            except AttributeError:
+                pass
+            stream.write(text or "")
         if result.returncode != 0:
             sys.exit(result.returncode)
 
