@@ -73,6 +73,19 @@ departments = ["Animation", "FX", "Layout", "Lighting", "Modeling"]
 ext = "nk"
 departments = ["Compositing", "2D"]
 
+[dcc.maya]
+ext = "ma"
+# ASCII rather than .mb on purpose: the context stamp lives in fileInfo, and
+# in a .ma that is a greppable line of text. A stamp that can be read - and
+# repaired - without opening Maya has already paid for the file size once.
+#
+# The overlap with Blender's list is deliberate, unlike Resolve's. Two DCCs
+# claiming Modeling is a studio that models in both, and each shows the same
+# task with its own files under it. Resolve's list avoids Compositing for a
+# different reason entirely: there it would break Import.
+departments = ["Animation", "FX", "Layout", "Lighting", "Modeling",
+               "Rigging", "Shading", "Texture"]
+
 [dcc.resolve]
 ext = "drp"
 # Resolve's own work, not copy-pasted from Nuke's list: grading and

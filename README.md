@@ -1,12 +1,13 @@
 # BB Kitsu Pipeline
 
-A Kitsu-backed production pipeline for Blender, Nuke and DaVinci Resolve, with
-Houdini to follow. Browse shots from Kitsu, open and version scene files,
+A Kitsu-backed production pipeline for Blender, Maya, Nuke and DaVinci
+Resolve, with Houdini to follow. Browse shots from Kitsu, open and version scene files,
 render with derived names and publish back — the same way in every
 application, because every application calls the same core.
 
 Status: **early**. The shared core and the Blender shot browser work. Nuke has
-browsing, work files and publishing. Resolve has browsing, project
+browsing, work files and publishing. Maya has browsing over shots and assets,
+work files, versioning, render-path control and publishing. Resolve has browsing, project
 open/create, and a Render ▸ Review ▸ Publish flow with a derived, per-project
 render path.
 
@@ -25,6 +26,9 @@ BB_core/            shared, DCC-agnostic pipeline logic
   presets/default.toml   naming, paths and output streams, as data
 
 blender/BB_pipeline/         the Blender extension
+maya/BB_pipeline_maya/       the Maya integration
+maya/userSetup.py              installs the Kitsu menu at Maya startup
+maya/install.py                writes the Maya module file
 nuke/BB_pipeline_nuke/       the Nuke integration
 nuke/install.py                adds the Kitsu menu to ~/.nuke/menu.py
 resolve/BB_pipeline_resolve/ the DaVinci Resolve integration
@@ -85,6 +89,7 @@ each DCC needs beyond the repo itself:
 | | Requires | Install | Run |
 |---|---|---|---|
 | **Blender** | Blender 4.2+ | `python tools/build_extension.py`, then **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk** with the zip it produces | opens with Blender |
+| **Maya** | Maya 2025+ (PySide6, Python 3.11) | `python maya/install.py` — writes a module file into Maya's modules folder | **Kitsu** menu appears after restart |
 | **Nuke** | Nuke 16+ | `"path/to/Nuke's python.exe" nuke/install.py` — patches `~/.nuke/menu.py` | **Kitsu** menu appears after restart |
 | **Resolve** | **Resolve Studio** (the free version has no external scripting API), and **PySide6 or PySide2** pip-installed in whichever Python runs the launcher | copy `resolve/kitsu_resolve_publisher.py`, `resolve/BB_pipeline_resolve/` and `BB_core/` anywhere — not `Scripts/Comp` | `python kitsu_resolve_publisher.py`, as its own process, with Resolve already running and a project open — **never** through Workspace ▸ Scripts (see the Resolve section below for why) |
 
@@ -551,6 +556,114 @@ studio server, a shot or task list takes 4-26 ms and the login 225 ms, which
 is far below the point where threading earns its complexity - and inline means
 the dialog shows new data on the same redraw. The threaded path is still there
 behind `background=True`, for the preview uploads that genuinely take an hour.
+
+## Maya
+
+Maya browses **shots and assets**, the way Blender does, and offers the 3D
+departments — Modeling, Rigging, Shading, Texture, Layout, Animation, FX,
+Lighting. It models, rigs, animates and lights, and half of that work is
+assets, so the two branches sit side by side in one tree rather than behind a
+mode switch: creating a shot file under an asset is exactly the mistake a
+mode switch invites.
+
+Tasks Maya does **not** author still appear, marked `(renders)`. A lighter has
+every reason to see what compositing produced; what changes is the buttons,
+which become **Open Render Folder** instead of offering to write a Maya scene
+into somebody else's task folder.
+
+Verified against Maya 2026 (Python 3.11.9, PySide6 6.5.3). Maya 2025 shares
+both and should work; it has not been run.
+
+### Install
+
+```bash
+python maya/install.py
+```
+
+That writes `BB_pipeline.mod` into Maya's modules folder — `Documents/maya/`
+on Windows, `~/Library/Preferences/Autodesk/maya/` on macOS, or wherever
+`MAYA_APP_DIR` points — naming this checkout. Nothing is copied, so editing
+the package or the shared core and restarting Maya is the whole loop.
+`--remove` takes it back out and `--maya-version 2026` limits it to one.
+
+It refuses anything before 2025, which is where PySide6 and Python 3.11
+arrive. Installing into an older Maya would put a `userSetup.py` in front of
+an interpreter that cannot import the package, so every launch would open on
+a traceback.
+
+A module file rather than a junction because it is what Maya's own loader is
+for: one line puts `maya/` on `MAYA_SCRIPT_PATH`, which both makes
+`BB_pipeline_maya` importable and makes Maya run the `userSetup.py` beside it.
+The menu is built deferred — at the moment `userSetup.py` runs there is an
+interpreter but no main window yet.
+
+### The context stamp lives in fileInfo
+
+Blender stamps a scene property and Nuke a knob on the root. Maya's equivalent
+is `fileInfo`, and in a `.ma` it is an ordinary greppable line:
+
+```
+fileInfo "BB_pipeline" "{\"entity_type\": \"asset\", \"project\": ...
+```
+
+which is why `.ma` is the default rather than `.mb`. A stamp that can be read —
+and repaired — without opening Maya has already paid for the file size once.
+That is not hypothetical: thirteen Nuke scripts were re-stamped by text
+substitution after a project rename, and only because the stamp was readable.
+
+**fileInfo escapes what you give it**, immediately on set, and returns the
+escaped form forever after. Measured, not assumed: a 295-character JSON stamp
+reads back as 336. So reading unescapes before parsing, and nothing ever
+writes back what it just read — that would escape it a second time. The suite
+checks exactly this, in both `.ma` and `.mb`.
+
+### Where it renders to
+
+Maya builds its output path out of two halves that live in different places:
+the workspace's `images` file rule, and the scene's `imageFilePrefix`. Both
+are set, because setting either alone leaves the render landing half-right —
+the correct name under the last shot's folder, or this shot's folder under the
+previous version's name.
+
+The file rule lives in `workspace.mel`, **not** in the scene, so a scene
+reopened in a fresh Maya renders wherever that workspace happens to point.
+Aiming it on every open, and again on every version up, is what stops frames
+landing somewhere plausible and wrong.
+
+### What it publishes
+
+A still, always. The picture is a playblast of the viewport with
+`showOrnaments=False`, so the HUD, the axis and the view-cube stay out of it —
+a thumbnail with a grid baked across it is not a picture of the model.
+
+Publishing a render frame picks the **middle** frame of the sequence, not the
+first: a first frame is routinely the least representative thing in a shot.
+An EXR-only render is refused rather than uploaded, because Kitsu cannot
+display one and a preview nobody can open is worse than no preview.
+
+Maya does not build review movies. Nuke does, through colour management, and
+a Maya publish that quietly turned four renders into an mp4 would be guessing.
+
+### Reference, not just import
+
+Two buttons, not one with a checkbox. A reference keeps tracking the file it
+came from and an import does not, and which of those you wanted is not
+something to discover a week later. References are namespaced after the file,
+because two sharing the root namespace collide the moment both contain a node
+with the same name.
+
+### Tests
+
+```
+"C:/Program Files/Autodesk/Maya2026/bin/mayapy.exe" tests/maya_check.py
+```
+
+Nothing is stubbed. Nuke needs a render licence to run headless so its suite
+fakes the `nuke` module; Maya does not, so the things worth checking — that a
+stamp survives a save and reopen, that Maya itself computes the render path
+the pipeline intended — are checked against the application rather than
+against a description of it.
+
 
 ## Nuke
 
@@ -1069,18 +1182,29 @@ licence needed:
 "C:/Program Files/Nuke16.0v6/python.exe" tests/nuke_check.py
 ```
 
+The Maya side stubs nothing at all. `mayapy` has a licence for
+`maya.standalone`, so there is a real scene graph, a real `fileInfo` and real
+render globals to check against — which is the only way to prove a stamp
+survives a save and reopen, or that Maya itself computes the render path the
+pipeline intended:
+
+```bash
+"C:/Program Files/Autodesk/Maya2026/bin/mayapy.exe" tests/maya_check.py
+```
+
 Three checks in `test_core.py` are static rather than behavioural, because the
 bugs they catch only surface when a line runs — and Blender stops drawing a
 panel when its draw callback raises, reporting nothing:
 
 - an attribute read off a sibling module that the module does not define;
 - a `self.<name>` a class reads but never assigns;
-- the version declared in three files that cannot import each other.
+- the version declared in four files that cannot import each other.
 
 Each was written after the bug it describes reached a running DCC, and each is
 verified to fail when that bug is put back.
 
-Verified against Blender 4.2, 4.5, 5.1 and 5.2, and Nuke 16.0v6.
+Verified against Blender 4.2, 4.5, 5.1 and 5.2, Nuke 16.0v6, and
+Maya 2026.
 
 ## Licence
 

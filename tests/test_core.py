@@ -1016,9 +1016,12 @@ class TestVersionsAgree(unittest.TestCase):
                                  r'^version = "([^"]+)"')
         nuke = self.declared("nuke/BB_pipeline_nuke/__init__.py",
                              r"^__version__ = '([^']+)'")
+        maya = self.declared("maya/BB_pipeline_maya/__init__.py",
+                             r"^__version__ = '([^']+)'")
         self.assertEqual(core, manifest,
                          "BB_core and the Blender manifest disagree")
         self.assertEqual(core, nuke, "BB_core and the Nuke package disagree")
+        self.assertEqual(core, maya, "BB_core and the Maya package disagree")
 
 
 class TestSiblingModuleNames(unittest.TestCase):
@@ -1031,7 +1034,8 @@ class TestSiblingModuleNames(unittest.TestCase):
     tests that matter, so they are caught statically instead.
     """
 
-    PACKAGES = ("blender/BB_pipeline", "nuke/BB_pipeline_nuke")
+    PACKAGES = ("blender/BB_pipeline", "nuke/BB_pipeline_nuke",
+                "maya/BB_pipeline_maya")
 
     def modules_in(self, package):
         return {path.stem: path for path in (REPO / package).glob("*.py")
@@ -1107,6 +1111,7 @@ class TestSelfAttributesAreAssigned(unittest.TestCase):
     """
 
     FILES = ("nuke/BB_pipeline_nuke/browser.py",
+             "maya/BB_pipeline_maya/browser.py",
              "blender/BB_pipeline/operators.py",
              "blender/BB_pipeline/treeview.py")
 
