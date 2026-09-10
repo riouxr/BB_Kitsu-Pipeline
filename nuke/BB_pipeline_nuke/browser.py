@@ -145,6 +145,7 @@ class Browser(object):
 
         self.project.currentIndexChanged.connect(self._on_project)
         self.tree.currentItemChanged.connect(self._on_tree)
+        self.versions.itemDoubleClicked.connect(self._on_double_click)
 
         self.open_button.clicked.connect(self._open)
         self.new_button.clicked.connect(lambda: self._create(False))
@@ -680,6 +681,17 @@ class Browser(object):
         self._say('created %s' % os.path.basename(path))
         self.dialog.accept()
         ask_to_publish(path)
+
+    def _on_double_click(self, _item=None):
+        '''Double-clicking a row does what that row's main button does.
+
+        Open for a script, Import for someone else's render - the buttons
+        stay, this is only the shorter way to the same thing.
+        '''
+        if self._authoring:
+            self._open()
+        else:
+            self._import()
 
     def _settings(self):
         show_settings()

@@ -186,16 +186,62 @@ class TestPaths(unittest.TestCase):
         main = self.parts(workfiles.render_file(context, "main", config=self.config))
         offline = self.parts(workfiles.render_file(context, "offline", config=self.config))
 
-        # Nothing in here repeats what the folders above already say, and
         # `main` has no folder of its own - a directory called main next to
-        # nothing else says nothing.
+        # nothing else says nothing. The file does repeat the show and the
+        # sequence, on purpose and only for a shot: see test_shot_renders_
+        # name_their_show.
         self.assertEqual(
             main,
-            "Y:/render/FF9/0070/precomp3d/Render/v003/0070_v003.####.exr")
+            "Y:/render/FF9/0070/precomp3d/Render/v003/VIL_FF9_0070_v003.####.exr")
         # Same context, same version folder, different stream and format.
         self.assertIn("/offline/", offline)
         self.assertTrue(offline.endswith(".mov"))
         self.assertIn("v003", offline)
+
+    def test_shot_renders_name_their_show(self):
+        """A shot's frames carry the show and sequence; an asset's do not.
+
+        Shot renders leave the folders that name them - into an edit, a
+        review, another department's comp - and sh010_v003 from six shows
+        cannot be told apart once they have. The sequence goes in as well
+        because shot names repeat: one show had three shots called 01.
+        """
+        shot = sample_context(3)
+        self.assertEqual(workfiles.render_stem(shot, self.config),
+                         "VIL_FF9_0070_v003")
+
+        asset = EntityContext(entity_type="asset", project="VIL", group="Prop",
+                              entity="knife", task="Modeling", version=3)
+        self.assertEqual(workfiles.render_stem(asset, self.config), "knife_v003")
+
+    def test_an_unstamped_shot_takes_its_show_from_the_config(self):
+        """A shot recovered from its path has no project in it - the path
+        starts at the project root. The config was built for one, so the
+        render is named exactly as a stamped sibling's would be, rather than
+        not rendering at all, which is what happened first."""
+        from dataclasses import replace
+
+        project = {"id": "p", "name": "Show Name", "code": None,
+                   "description": ""}
+        config = self.config.for_kitsu_project(project)
+        self.assertEqual(config.project_name, "Show Name")
+
+        pathless = replace(sample_context(3), project="")
+        self.assertEqual(workfiles.render_stem(pathless, config),
+                         "Show-Name_FF9_0070_v003")
+
+    def test_a_shot_with_no_show_anywhere_still_renders(self):
+        from dataclasses import replace
+
+        pathless = replace(sample_context(3), project="")
+        self.assertEqual(workfiles.render_stem(pathless, self.config),
+                         "0070_v003")
+
+    def test_a_shot_master_keeps_its_show(self):
+        from BB_core import master
+
+        self.assertEqual(master._master_stem(sample_context(3), self.config),
+                         "VIL_FF9_0070_master")
 
     def test_unknown_stream_is_refused(self):
         with self.assertRaises(ValueError):

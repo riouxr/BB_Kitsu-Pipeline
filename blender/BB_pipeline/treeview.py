@@ -11,6 +11,8 @@ a tree that showed them under every shot would cost one request per shot on
 every redraw. Expanding a shot selects it, which is what fetches its tasks -
 the lazy load and the selection are the same gesture.
 '''
+import time
+
 import bpy
 from bpy.types import Operator
 
@@ -123,10 +125,41 @@ def _pick(props, kind, identifier):
         props.version = identifier
 
 
+# The last version row picked, and when, so a second pick of the same row
+# can open it. Blender hands a button's operator a click, never a
+# DOUBLE_CLICK - that event exists for keymaps, not for buttons - so the pair
+# is recognised here, against the double-click time the artist has set in
+# Blender's own preferences.
+_last_pick = {'key': None, 'time': 0.0}
+
+
+def _double_click_seconds():
+    try:
+        return bpy.context.preferences.inputs.mouse_double_click_time / 1000.0
+    except Exception:
+        return 0.35
+
+
+def is_double_click(key, now=None):
+    '''True when *key* was also the last row picked, within a double-click.
+
+    Consumes the pair: a third click starts a new one rather than opening
+    the file a second time.
+    '''
+    now = time.monotonic() if now is None else now
+    if (_last_pick['key'] == key
+            and now - _last_pick['time'] <= _double_click_seconds()):
+        _last_pick['key'] = None
+        return True
+    _last_pick['key'] = key
+    _last_pick['time'] = now
+    return False
+
+
 class BB_OT_tree_pick(Operator):
     bl_idname = 'bb.tree_pick'
     bl_label = 'Select'
-    bl_description = 'Select this item'
+    bl_description = 'Select this item - double-click a version to open it'
     bl_options = {'INTERNAL'}
 
     kind: bpy.props.StringProperty()
@@ -140,6 +173,13 @@ class BB_OT_tree_pick(Operator):
             _pick(props, self.kind, self.identifier)
         except TypeError:
             return {'CANCELLED'}
+
+        # Double-clicking a version opens it - the same Open the button below
+        # the list runs, asking the same questions first. Only versions:
+        # everything else in the tree has nothing to open.
+        if self.kind == 'version' and is_double_click((self.kind,
+                                                      self.identifier)):
+            bpy.ops.bb.open_workfile('INVOKE_DEFAULT')
         return {'FINISHED'}
 
 

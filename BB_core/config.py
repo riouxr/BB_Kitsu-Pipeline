@@ -142,6 +142,16 @@ class Config:
         data = self._data
         changed = False
 
+        # Which show this config was built for, kept alongside what it says.
+        # A context recovered from a file's path has no project in it - the
+        # path starts at the project root, so nothing in it names the show -
+        # and a template that asks for one, the shot render name, would
+        # otherwise have nothing to give it.
+        named = (project or {}).get("code") or (project or {}).get("name")
+        if named:
+            data = _merge(data, {"kitsu_project": {"name": named}})
+            changed = True
+
         try:
             overrides = filetree.translate(project)
         except filetree.UnsupportedTree:
@@ -159,6 +169,11 @@ class Config:
             changed = True
 
         return Config(data) if changed else self
+
+    @property
+    def project_name(self):
+        """The Kitsu project this config was built for, or ''."""
+        return str((self._data.get("kitsu_project") or {}).get("name") or "")
 
     def for_project(self, project):
         """A copy with any ``[projects.<name>]`` overrides folded into paths.

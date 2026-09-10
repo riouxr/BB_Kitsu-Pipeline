@@ -218,11 +218,33 @@ def render_stem(context, config=None):
     is how they stop agreeing.
     """
     config = (config or Config()).for_project(context.project)
-    return _fill(
-        config.paths["render_stem"], context, config,
-        version=naming.format_version(context.version or 1, config),
-        versioned=context.versioned(config=config),
-    )
+
+    # A template of its own for each entity type when one is set, and the
+    # plain one otherwise. A shot's renders travel far from the folders that
+    # name their show - into an edit, a review, somebody else's comp - and a
+    # drive full of sh010_v003 from six different shows is how nobody can
+    # say where a frame came from. An asset's rarely leave.
+    template = (config.paths.get("render_stem_%s" % context.entity_type)
+                or config.paths["render_stem"])
+
+    extra = {"version": naming.format_version(context.version or 1, config),
+             "versioned": context.versioned(config=config)}
+    # A file never stamped gets its context from its path, which starts at
+    # the project root and so never names the show. The config was built
+    # for one, and that is the answer.
+    if not context.project and config.project_name:
+        extra["project"] = naming.sanitize(config.project_name, config)
+
+    try:
+        return _fill(template, context, config, **extra)
+    except ValueError:
+        if template == config.paths["render_stem"]:
+            raise
+        # Nothing anywhere names what the longer name needs. A render filed
+        # under the short name is still a render; one that cannot be named
+        # at all is not rendered, which is how rendering an unstamped shot
+        # came to stop outright.
+        return _fill(config.paths["render_stem"], context, config, **extra)
 
 
 def render_output(context, stream="main", config=None):

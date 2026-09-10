@@ -566,10 +566,11 @@ def main():
         entity, stream, directory, stem, settings = render.target(
             bpy.context, render.ANIMATION)
         check(stream == "main", "an animation goes to the main stream")
-        # The folders above already say the project, entity and task, so the
-        # file only names the thing and its version.
-        check(stem == "0070_v003",
-              "the render is named off the entity and version (%s)" % stem)
+        # A shot's frames name the show and the sequence as well - they are
+        # the ones that leave the folders that say so.
+        check(stem.endswith("_FF9_0070_v003") and not stem.startswith("_"),
+              "a shot render is named off its show, sequence, shot and "
+              "version (%s)" % stem)
         check(Path(directory).name == "v003"
               and "Render" in Path(directory).parts,
               "renders land in a per-version folder (%s)" % directory)
@@ -1523,6 +1524,65 @@ def main():
               and after["shot"] == booked["shot"],
               "expanding a branch leaves the bookmark alone (%s/%s)"
               % (after["sequence"], after["shot"]))
+
+        # -- double-clicking a version opens it ------------------------------
+        # Blender gives a button's operator a click, never a DOUBLE_CLICK, so
+        # the pair is recognised by time - against the double-click time set
+        # in Blender's own preferences, not a number of our own.
+        window = bpy.context.preferences.inputs.mouse_double_click_time / 1000.0
+        treeview._last_pick["key"] = None
+        check(not treeview.is_double_click(("version", "3"), now=100.0),
+              "a first click on a version only selects it")
+        check(treeview.is_double_click(("version", "3"),
+                                       now=100.0 + window * 0.5),
+              "a second click on it within the double-click time opens it")
+        check(not treeview.is_double_click(("version", "3"),
+                                           now=100.0 + window * 0.8),
+              "and a third starts over rather than opening it twice")
+        treeview.is_double_click(("version", "3"), now=200.0)
+        check(not treeview.is_double_click(("version", "4"),
+                                           now=200.0 + window * 0.5),
+              "two quick clicks on different versions open neither")
+        treeview.is_double_click(("version", "4"), now=300.0)
+        check(not treeview.is_double_click(("version", "4"),
+                                           now=300.0 + window * 2),
+              "and two slow clicks on the same one open nothing")
+
+        # Through the real operator, with Open stood in for: the timing is
+        # checked above, this is that a double-click reaches Open at all.
+        opened = []
+        real_bpy = treeview.bpy
+
+        class _Ops:
+            class bb:
+                @staticmethod
+                def open_workfile(*args, **kwargs):
+                    opened.append(args)
+
+        class _Shim:
+            ops = _Ops()
+            context = bpy.context
+            props = bpy.props
+
+        treeview._last_pick["key"] = None
+        real_pick = treeview._pick
+        treeview.bpy = _Shim()
+        # Selecting is _pick's job and is checked elsewhere; here it would
+        # only refuse a version this scene has no file for.
+        treeview._pick = lambda *args: None
+        try:
+            picker = treeview.BB_OT_tree_pick
+            fake = type("Pick", (), {"kind": "version", "identifier": "1"})()
+            picker.execute(fake, bpy.context)
+            first = len(opened)
+            picker.execute(fake, bpy.context)
+        finally:
+            treeview.bpy = real_bpy
+            treeview._pick = real_pick
+            treeview._last_pick["key"] = None
+        check(first == 0 and opened == [("INVOKE_DEFAULT",)],
+              "a double-clicked version row runs Open, asking its usual "
+              "questions first (%s)" % opened)
 
         # Choosing a shot in another sequence has to move both, or the pair
         # is impossible and the restore drops it.

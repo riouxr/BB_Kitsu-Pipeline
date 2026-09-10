@@ -758,7 +758,13 @@ def main():
                         task_status_id="st9")
     check("updated" in note.lower(), "publishing reports success (%r)" % note)
     posted = StubClient.posted[-1][1] if StubClient.posted else {}
-    check(posted.get("comment") == "looks good", "the comment is sent")
+    # What was typed, then the [[vNNN]] marker tag_comment adds - the only
+    # link Launch from Kitsu has between a Kitsu image and the script version
+    # that made it. Checked as two parts rather than one string, so a change
+    # to the marker's spacing does not read as the comment going missing.
+    sent = posted.get("comment") or ""
+    check(sent.startswith("looks good"), "the comment is sent (%r)" % sent)
+    check("[[v" in sent, "and tagged with the script version that made it")
     check(posted.get("task_status_id") == "st9", "with the chosen status")
 
     idless = context.__class__(entity_type="shot", project="X", group="a",

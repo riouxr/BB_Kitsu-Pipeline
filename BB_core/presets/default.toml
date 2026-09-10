@@ -51,6 +51,13 @@ work_file = "{versioned}.{ext}"
 render_dir_shot = "{group}/{entity}/{task}/Render/{stream}/v{version}"
 render_dir_asset = "assets/{group}/{entity}/{task}/Render/{stream}/v{version}"
 render_stem = "{entity}_v{version}"
+# Except a shot's, which carry the show and the sequence as well. Shot renders
+# are the ones that leave the folders that name them - into an edit, a review,
+# another department's comp - and once there, sh010_v003 from six shows are
+# indistinguishable. The sequence is in it too because shot names are not
+# unique on their own: a show can have three shots called 01 in three
+# sequences. Assets keep the short form above; theirs rarely travel.
+render_stem_shot = "{project}_{group}_{entity}_v{version}"
 render_file = "{stem}.{frame}.{ext}"
 
 # Per-project overrides, for shows that do not live under the common root.

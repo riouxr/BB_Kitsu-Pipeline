@@ -1,5 +1,5 @@
 diff --git a/src/components/sides/TaskInfo.vue b/src/components/sides/TaskInfo.vue
-index 766808af2..281aa7b73 100644
+index 766808af2..20ff64a7d 100644
 --- a/src/components/sides/TaskInfo.vue
 +++ b/src/components/sides/TaskInfo.vue
 @@ -130,6 +130,25 @@
@@ -13,12 +13,12 @@ index 766808af2..281aa7b73 100644
 +                  v-if="!isCurrentUserClient"
 +                >
 +                  <play-icon class="icon is-small" />
-+                  {{ $t('tasks.launch') }}
++                  {{ launchLabel }}
 +                </button>
 +                <button
 +                  class="button flexrow-item set-master-button"
 +                  :title="setMasterHint"
-+                  :disabled="!launchVersion"
++                  :disabled="!imageVersion"
 +                  @click="onSetMasterClicked"
 +                  v-if="!isCurrentUserClient"
 +                >
@@ -45,7 +45,7 @@ index 766808af2..281aa7b73 100644
  import {
    getDownloadAttachmentPath,
    getTaskEntityPath,
-@@ -798,6 +818,45 @@ const currentRevision = computed(
+@@ -798,6 +818,79 @@ const currentRevision = computed(
      props.currentParentPreview?.revision || currentPreview.value?.revision || 0
  )
  
@@ -65,33 +65,67 @@ index 766808af2..281aa7b73 100644
 +  return map
 +})
 +
-+const launchVersion = computed(() => revisionVersionMap.value.get(currentRevision.value))
++// The local version behind the image selected in the preview dropdown.
++const imageVersion = computed(() => revisionVersionMap.value.get(currentRevision.value))
 +
-+const launchHint = computed(() =>
-+  launchVersion.value
-+    ? t('tasks.launch_hint_known', { version: launchVersion.value })
-+    : t('tasks.launch_hint_latest')
++// The newest revision the task has - the one the dropdown starts on.
++const newestRevision = computed(() =>
++  Math.max(0, ...(taskPreviews.value || []).map(preview => preview.revision || 0))
 +)
++
++// True when somebody has picked an older image than the newest one.
++const olderImagePicked = computed(
++  () => currentRevision.value > 0 && currentRevision.value < newestRevision.value
++)
++
++// What Launch opens: the latest local version, unless an older image has been
++// picked, and then the version that made that image. Following the selected
++// image unconditionally opened the wrong thing in the common case - five
++// versions saved since the only publish, and the newest image, the one the
++// dropdown starts on, still said v001. An undefined version is the server's
++// "latest".
++const launchVersion = computed(() =>
++  olderImagePicked.value ? imageVersion.value : undefined
++)
++
++// Said on the button itself when it is not the latest, so one button whose
++// target depends on the dropdown never hides which version it will open.
++const launchLabel = computed(() =>
++  launchVersion.value
++    ? `${t('tasks.launch')} v${String(launchVersion.value).padStart(3, '0')}`
++    : t('tasks.launch')
++)
++
++const launchHint = computed(() => {
++  if (launchVersion.value) {
++    return t('tasks.launch_hint_known', { version: launchVersion.value })
++  }
++  return olderImagePicked.value
++    ? t('tasks.launch_hint_latest')
++    : t('tasks.launch_hint_newest')
++})
 +
 +const onLaunchClicked = () => {
 +  launchTask(props.task.id, launchVersion.value)
 +}
 +
++// Master is about the image, not about carrying on working: it flags the
++// version behind whichever image is selected, newest or not.
 +const setMasterHint = computed(() =>
-+  launchVersion.value
-+    ? t('tasks.set_master_hint_known', { version: launchVersion.value })
++  imageVersion.value
++    ? t('tasks.set_master_hint_known', { version: imageVersion.value })
 +    : t('tasks.set_master_hint_unknown')
 +)
 +
 +const onSetMasterClicked = () => {
-+  if (!launchVersion.value) return
-+  setMasterVersion(props.task.id, launchVersion.value)
++  if (!imageVersion.value) return
++  setMasterVersion(props.task.id, imageVersion.value)
 +}
 +
  const displayedFrame = computed(
    () => props.currentFrame || currentFrameRaw.value
  )
-@@ -835,11 +894,17 @@ const previewOptions = computed(() => {
+@@ -835,11 +928,17 @@ const previewOptions = computed(() => {
    if (!taskPreviews.value) return []
    return [...taskPreviews.value]
      .sort((a, b) => b.revision - a.revision)
@@ -174,16 +208,17 @@ index 000000000..aae06c550
 +  fetch(`${SERVER}/set_master?${params}`).catch(() => {})
 +}
 diff --git a/src/locales/en.js b/src/locales/en.js
-index af3c50b87..8b885b72d 100644
+index af3c50b87..f5ca9ac74 100644
 --- a/src/locales/en.js
 +++ b/src/locales/en.js
-@@ -2037,6 +2037,13 @@ export default {
+@@ -2037,6 +2037,14 @@ export default {
      comment_image: 'Attach files',
      create_for_selection: 'Create a task for each empty cell',
      create_tasks: 'Add tasks',
 +    launch: 'Launch',
 +    launch_hint_known: 'Open v{version}, the work file behind this image, in its DCC',
 +    launch_hint_latest: 'Open the latest work file in its DCC (no local version known for this image)',
++    launch_hint_newest: 'Open the latest work file in its DCC - pick an older image to open the version behind it instead',
 +    preview_option_with_version: 'Image {revision} from v{version}',
 +    set_master: 'Set as Master',
 +    set_master_hint_known: 'Flag v{version}, the work file behind this image, as this task\'s master',
