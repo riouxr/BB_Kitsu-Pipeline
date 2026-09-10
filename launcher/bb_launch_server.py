@@ -136,7 +136,7 @@ def _resolve(task_id):
     """
     client = _get_client()
     context = bb_launch.resolve_context(client, task_id)
-    config = settings.config(client.project(context.project_id))
+    config = bb_launch.fresh_config(client, context.project_id)
     dcc = bb_launch.dcc_for(context, config)
     return context, config, dcc
 

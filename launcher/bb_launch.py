@@ -36,7 +36,7 @@ import blender_create
 import launcher_config
 import nuke_create
 import resolve_launch
-from BB_core import credentials, settings, versioning, workfiles
+from BB_core import credentials, projects, settings, versioning, workfiles
 from BB_core.context import EntityContext
 from BB_core.kitsu import KitsuClient, KitsuError, explain
 from BB_core.workfiles import RootNotConfigured
@@ -64,6 +64,30 @@ def parse_arg(arg):
 
 def _find(items, item_id):
     return next((item for item in (items or []) if item.get("id") == item_id), None)
+
+
+def fresh_config(client, project_id):
+    """The Config for a project, read live - and the local cache refreshed.
+
+    Refreshing the cache is the point, not a side effect. A DCC started by
+    Launch has no Kitsu session of its own - ``nuke_create_bg.py`` builds the
+    first script with none at all - so it falls back to the project copy
+    cached on this machine. That copy is only written when somebody selects
+    the project in a browser, so a ``[bb]`` block added to the brief
+    afterwards never reaches it: Launch then opens Nuke on a show that
+    plainly has a work root and reports that it has none.
+
+    This is the moment a fresh copy is guaranteed to be in hand, and the
+    moment right before a DCC reads the cache - so it is written here, on
+    every request.
+    """
+    project = client.project(project_id)
+    if project:
+        try:
+            projects.remember(project)
+        except Exception as error:      # noqa: BLE001 - never block a launch
+            print("[BB] could not refresh the project cache: %s" % error)
+    return settings.config(project)
 
 
 def resolve_context(client, task_id):
@@ -271,7 +295,7 @@ def main(argv):
         client.log_in(email, password)
         context = resolve_context(client, task_id)
 
-        config = settings.config(client.project(context.project_id))
+        config = fresh_config(client, context.project_id)
         dcc = dcc_for(context, config)
 
         version, identifier = open_version(context, config, dcc, wanted_version)
