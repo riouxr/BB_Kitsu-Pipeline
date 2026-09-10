@@ -266,17 +266,57 @@ If a task has no scene file yet, the browser offers to create v001. Otherwise
 pick a version and open it, or use `Kitsu ▸ Save Next Version` to increment the
 file you are already in.
 
-### Saving updates Kitsu
+### Saving asks first
 
-Saving a version opens a dialog asking for a **comment** and a **task status**,
-then posts them on the Kitsu task with an OpenGL render of the viewport
-attached — which Kitsu also uses as the task thumbnail. It is an OpenGL render
-rather than a screenshot so the add-on's own dialogs and gizmos never end up
-as the shot thumbnail.
+**Save Next Version** opens its dialog **before** anything is written. The
+button says which version it will save — **Save v009** — and only pressing it
+claims the version, saves the file and replaces the master. **Cancel leaves
+the disk exactly as it was.** It used to save first and ask afterwards, so
+cancelling the question still left a new version behind. Nuke and Maya work
+the same way.
+
+The dialog offers:
+
+- **Publish to Kitsu** — a **comment** and a **task status**, posted on the
+  task with an OpenGL render of the viewport attached, which Kitsu also uses
+  as the task thumbnail. It is an OpenGL render rather than a screenshot so
+  the add-on's own dialogs and gizmos never end up as the shot thumbnail.
+  Greyed out, with the reason, when there is nowhere to publish to.
+- **Save as Master** — on by default; see [Master](#master) below.
+
+Only a dialog somebody answered publishes: a script running Save Next Version
+saves, and makes the master, but never posts in anybody's name.
 
 The status list comes from Kitsu and starts with **Leave unchanged**, which is
-the default. `Kitsu ▸ Update Kitsu…` opens the same dialog for the file already
-open, without saving a new version.
+the default. `Kitsu ▸ Update Kitsu…` opens the same choices for the file already
+open, without saving a new version — including **Save as Master**, so the
+version open can be made master on its own.
+
+### Master
+
+A task's **master** is the one version everybody else should use, under a name
+that never changes, so what links it picks up the next approved version by
+reopening rather than by being re-pointed at v009.
+
+- **Scene files** — a copy beside the versions, the version swapped for the
+  word: `knife_v008.blend` is flagged as `3DScenes/knife_master.blend`. Beside
+  them rather than in a folder of its own so relative texture and library
+  paths inside it still resolve.
+- **Renders** — a copy of the frames in the application's render folder:
+  `Render/3DRenders/Master/` (or `2DRenders`), renamed `<name>_master.####.exr`.
+  A real copy, not a link — see `BB_core/master.py` for why.
+
+**Save as Master** is on every save and every publish — Save Next Version,
+Update Kitsu, a new version from the browser, Blender's Submit to Kitsu, a Nuke
+Write publish, Maya's Publish Render Frame — and on by default. A publish with
+it ticked adds `[[master:vN]]` to the Kitsu comment, the record the browsers
+read for their **Master (v009)** label. Kitsu's own **Set Master** button copies
+the scene as well as the renders.
+
+Every browser lists the master first, above the versions, with its picture.
+It opens, appends, links and double-clicks exactly like a version, and your
+newest version stays the one selected when a task is opened. A master opened
+and versioned up carries on from the task's latest version.
 
 It goes through the same `KitsuClient.publish_preview` the render publish will
 use, so a save and a render land in Kitsu identically and differ only in the
@@ -322,9 +362,14 @@ expects rather than into the startup file's `/tmp` or the last shot you had
 open:
 
 ```
-<render_root>/sc01/sh03/Lighting/Render/v012/sh03_v012.
-<render_root>/assets/Prop/Kitchen-counter/Modeling/Render/v002/Kitchen-counter_v002.
+<render_root>/sc01/sh03/Lighting/Render/3DRenders/v012/Show_sc01_sh03_v012.
+<render_root>/assets/Prop/Kitchen-counter/Modeling/Render/3DRenders/v002/Kitchen-counter_v002.
 ```
+
+`3DRenders` is Blender's (and Maya's) render folder; Nuke and Resolve render
+into `2DRenders`, so a comp's frames and the lighting frames it reads never
+share a version folder. A shot's file names its show and sequence as well —
+shot renders are the ones that leave the folders that say so.
 
 Nothing there repeats what the path already says. The project is the root, the
 entity and the task are folders, so the file names only the thing and its
@@ -386,9 +431,16 @@ from the settings file.
 ### Scene file names
 
 ```
-<work_root>/FF9/0070/precomp3d/0070_v003.blend
-<work_root>/assets/Prop/Kitchen-counter/Modeling/Kitchen-counter_v003.blend
+<work_root>/FF9/0070/precomp3d/3DScenes/0070_v003.blend
+<work_root>/assets/Prop/Kitchen-counter/Modeling/3DScenes/Kitchen-counter_v003.blend
 ```
+
+Each application keeps its scene files in a folder of its own inside the task
+— `3DScenes` for Blender and Maya, `2DScene` for Nuke — rather than loose in
+the task folder beside everybody else's. Set per application in the config
+(`scene_folder`, `render_folder` under `[dcc.*]`). Files in the old, flat
+place are still listed, opened and counted, so numbering carries on across the
+move; see [Moving existing files](#moving-existing-files).
 
 The thing and its version, and nothing the folders already say. The old scheme
 spelled the whole context into every filename, which repeated the folder path
@@ -412,6 +464,30 @@ base = "{project}_{group}_{entity}_{task}"
 Nothing else needs changing — what a context must carry is derived from
 whatever the templates ask for, so the long scheme demands the project again
 on its own.
+
+### Moving existing files
+
+```bash
+python tools/migrate_folders.py                         # dry run, every project
+python tools/migrate_folders.py --project Moon --apply  # move one project
+python tools/migrate_folders.py --undo "<log>"          # put it back
+```
+
+Moves scene files — with their `.blend1` backups, `_time.txt` files and
+thumbnails — into their application's folder, and renders into `3DRenders` or
+`2DRenders`, deciding which by the scene files in the task, or for a task with
+none (Resolve's) by its department. A dry run by default; every move of an
+`--apply` goes into a log under `~/.BB_pipeline/migrations/` that `--undo`
+replays backwards. Close Blender, Nuke, Maya and Resolve first.
+
+**It moves files and changes nothing inside them**, and that has a cost: a
+Blender file keeping textures or linked libraries as relative paths
+(`//tex/wood.png`) resolves them against its own folder, so one folder deeper
+they go missing — **File ▸ External Data ▸ Find Missing Files** fixes them —
+and a Nuke Read pointing at a render that moved no longer finds it. `--scan`
+lists those files first; `--fix-paths` also repairs them, re-saving each
+Blender file through the version that wrote it and rewriting Nuke scripts as
+text.
 
 ### Statuses belong to the show
 
@@ -469,8 +545,8 @@ the scene file:
 | **Render Playblast** | OpenGL pass of the range, as PNG frames |
 
 ```
-<render root>/<seq>/<shot>/<task>/Render/v003/<name_v003>.1001.exr
-                                  /Render/playblast/v003/<name_v003>.1001.png
+<render root>/<seq>/<shot>/<task>/Render/3DRenders/v003/<name_v003>.1001.exr
+                                  /Render/3DRenders/playblast/v003/<name_v003>.1001.png
 ```
 
 **A playblast is frames, not a movie.** It used to go straight to H.264 on the
@@ -742,7 +818,7 @@ there is nothing to type.
 | **Browser…** | a shot tree on the left, versions with pictures on the right |
 | **Import into Current Script** | paste another version's nodes into the open comp |
 | **Create Write Node** | a Write pointed at this version's render path |
-| **Save Next Version** | version up the open script |
+| **Save Next Version** | asks first, then versions up the open script |
 | **Update Kitsu…** | comment, status and a snapshot for the script already open |
 
 **Import into Current Script** is on its own row under the other three: those
@@ -953,7 +1029,7 @@ tree or its Brief `[bb]` block, the same chain `BB_core.workfiles` uses for
 every other DCC — and is never shown or typed in. It lands at:
 
 ```
-<render_root>/<sequence>/<shot>/<task>/Render/offline/v003/<shot>_v003.mp4
+<render_root>/<sequence>/<shot>/<task>/Render/2DRenders/offline/v003/<shot>_v003.mp4
 ```
 
 — the `offline` stream already defined in `presets/default.toml` for a
