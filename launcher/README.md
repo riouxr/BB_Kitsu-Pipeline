@@ -96,9 +96,14 @@ someone specifically wants a terminal-launchable URL.
      path).
    - drive the **Launch** button, next to that dropdown in the task side
      panel (`src/components/sides/TaskInfo.vue`): `fetch()` to
-     `bb_launch_server.py` with the version resolved from whichever
-     revision is currently selected, or no version at all (→ latest) when
-     it is not known.
+     `bb_launch_server.py` with **no version (→ the latest local one)**,
+     unless an image older than the newest has been picked in the dropdown
+     - then the version that made that image, and the button reads
+     *Launch v001* so its target is never hidden. It used to follow the
+     selected image unconditionally, which opened v001 for a task with
+     five versions saved since its only publish: the dropdown starts on the
+     newest image, and that still came from v001. **Set Master** still
+     flags the version behind whichever image is selected.
 
 3. **`bb_launch_server.py`**, running on the artist's own machine, resolves
    the task (department → DCC, from `BB_core/presets/default.toml`'s
@@ -313,9 +318,16 @@ frontend container or image to rebuild.
 
 **This lives in the container's writable layer.** It is lost if the
 container is recreated (an image update, `docker compose down && up`) -
-redeploy after any of those. A pre-patch backup was taken once, tonight:
-`~/Documents/kitsu-server/kitsu-frontend-1.0.58-backup.tar.gz` on the host,
-restorable with the same `docker cp` + `tar xzf` steps in reverse.
+redeploy after any of those. Backups on the host, each restorable with the
+same `docker cp` + `tar xzf` steps in reverse:
+
+- `~/Documents/kitsu-server/kitsu-frontend-1.0.58-backup.tar.gz` - stock
+  Kitsu 1.0.58, before any patch.
+- `~/Documents/kitsu-server/kitsu-frontend-before-1.1.0.tar.gz` - the patched
+  build that was live before the Launch-follows-the-dropdown change
+  (2026-09-10).
+
+Take one before every deploy: the deploy empties `/opt/zou/kitsu` first.
 
 ```bash
 # 1. Clone upstream at the pinned commit and apply the patch (skip the
