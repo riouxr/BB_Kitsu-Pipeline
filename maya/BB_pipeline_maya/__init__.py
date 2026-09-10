@@ -114,8 +114,25 @@ def open_settings(*_args):
 
 
 def save_next_version(*_args):
-    '''Version up the open scene, then offer to tell Kitsu.'''
-    from . import browser, scenes
+    '''Ask first, then version up the open scene and do what was ticked.
+
+    Asked before anything is written: the version is only claimed, the scene
+    only saved and the master only replaced once OK is pressed, so Cancel
+    leaves the disk exactly as it was.
+    '''
+    from . import browser, scenes, stamp
+
+    try:
+        upcoming, version = scenes.upcoming_version()
+    except scenes.SceneError as error:
+        browser._warn(str(error))
+        return ''
+
+    choices = browser.ask_save_choices(
+        stamp.read_current()[0].at_version(version), upcoming,
+        title='Save Next Version', ok_text='Save v%03d' % version)
+    if choices is None:
+        return ''
 
     try:
         path, note = scenes.save_next_version()
@@ -124,7 +141,7 @@ def save_next_version(*_args):
         return ''
 
     print('[Kitsu] saved %s%s' % (path, ' - %s' % note if note else ''))
-    browser.ask_to_publish(path)
+    browser.carry_out(choices, stamp.read_current()[0], path)
     return path
 
 
@@ -196,8 +213,12 @@ def open_work_folder(*_args):
         return ''
 
     try:
-        folder = str(workfiles.work_dir(entity_context,
-                                        session.config_for(entity_context)))
+        config = session.config_for(entity_context)
+        # The scene folder once there is one; the task folder until then.
+        folder = workfiles.scene_dir(entity_context, session.DCC, config)
+        if not folder.is_dir():
+            folder = workfiles.work_dir(entity_context, config)
+        folder = str(folder)
     except Exception as error:
         browser._warn('No work folder for this one (%s)' % error)
         return ''

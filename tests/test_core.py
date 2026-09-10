@@ -179,7 +179,7 @@ class TestPaths(unittest.TestCase):
         path = workfiles.work_file(sample_context(3), "blender", config=self.config)
         self.assertEqual(
             self.parts(path),
-            "X:/work/FF9/0070/precomp3d/0070_v003.blend")
+            "X:/work/FF9/0070/precomp3d/3DScenes/0070_v003.blend")
 
     def test_render_streams_share_one_version(self):
         context = sample_context(3)
@@ -384,7 +384,7 @@ class TestAssets(unittest.TestCase):
         path = workfiles.work_file(sample_asset(1), "blender", config=self.config)
         self.assertEqual(
             Path(path).as_posix(),
-            "X:/PizzaHunt/assets/Prop/knife/Modeling/knife_v001.blend")
+            "X:/PizzaHunt/assets/Prop/knife/Modeling/3DScenes/knife_v001.blend")
 
     def test_shots_and_assets_do_not_collide(self):
         clash_shot = EntityContext(entity_type="shot", project="VIL", group="Prop",
@@ -701,7 +701,7 @@ class TestBrief(unittest.TestCase):
         path = workfiles.work_file(sample_context(1), "blender", config=config)
         self.assertEqual(
             Path(path).as_posix(),
-            "I:/PizzaHunt/FF9/0070/precomp3d/0070_v001.blend")
+            "I:/PizzaHunt/FF9/0070/precomp3d/3DScenes/0070_v001.blend")
 
     def test_the_brief_outranks_the_tree(self):
         # The brief is the more deliberate of the two, so it goes last.
@@ -998,11 +998,14 @@ class TestVersionThumbnails(unittest.TestCase):
         self.assertTrue(first.name.endswith(".png"))
 
     def test_the_dcc_does_not_change_the_name(self):
-        # One picture per version, whichever application saved it - the
-        # browser looks the version up, not the application.
+        # The same name whichever application saved it - the browser looks
+        # the version up, not the application - but each beside its own
+        # application's scene files, in its own scene folder.
         blender = workfiles.thumb_file(self.context, "blender", 3, self.config)
         nuke = workfiles.thumb_file(self.context, "nuke", 3, self.config)
-        self.assertEqual(blender, nuke)
+        self.assertEqual(blender.name, nuke.name)
+        self.assertEqual(blender.parent.parent.name, "3DScenes")
+        self.assertEqual(nuke.parent.parent.name, "2DScene")
 
     def test_saving_copies_the_picture_into_place(self):
         stored = workfiles.save_thumb(self.context, "blender", self.source(),
@@ -1145,6 +1148,113 @@ class TestSiblingModuleNames(unittest.TestCase):
                             % (package, name, node.value.id, node.attr,
                                node.value.id))
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
+
+
+class TestApplicationFolders(unittest.TestCase):
+    """Each application's scenes and renders in a folder of its own.
+
+    A task folder used to hold a Blender scene, a Nuke script, a render
+    folder and a thumbnail cache side by side. Scenes now go into 3DScenes or
+    2DScene, renders into Render/3DRenders or Render/2DRenders - and nothing
+    already on disk is lost for it: files from before are still listed,
+    still counted, and still resolve from their path.
+    """
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        root = Path(self.folder.name)
+        self.config = Config().with_roots(work_root=root, render_root=root)
+        self.shot = sample_context(3)
+        self.asset = EntityContext(entity_type="asset", project="VIL",
+                                   group="Prop", entity="knife",
+                                   task="Modeling", version=8)
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def test_scenes_and_renders_name_their_application(self):
+        self.assertEqual(
+            workfiles.work_file(self.shot, "blender", 3, self.config).parent.name,
+            "3DScenes")
+        self.assertEqual(
+            workfiles.work_file(self.shot, "nuke", 3, self.config).parent.name,
+            "2DScene")
+        self.assertIn("3DRenders",
+                      workfiles.render_dir(self.shot, "main", self.config,
+                                           "blender").parts)
+        self.assertIn("2DRenders",
+                      workfiles.render_dir(self.shot, "main", self.config,
+                                           "nuke").parts)
+        playblast = workfiles.render_dir(self.shot, "playblast", self.config,
+                                         "blender")
+        self.assertEqual(playblast.parts[-3:], ("3DRenders", "playblast", "v003"))
+
+    def test_a_file_in_a_scene_folder_resolves_to_its_task(self):
+        for path, task in (
+                ("X:/Show/FF9/0070/precomp3d/3DScenes/0070_v003.blend", "precomp3d"),
+                ("X:/Show/FF9/0070/comp/2DScene/0070_v003.nk", "comp")):
+            found = EntityContext.from_path(path)
+            self.assertEqual((found.group, found.entity, found.task),
+                             ("FF9", "0070", task), path)
+
+    def test_old_files_are_still_listed_and_counted(self):
+        old = workfiles.work_dir(self.shot, self.config) / "0070_v002.blend"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"old")
+        found = workfiles.list_workfiles(self.shot, "blender", self.config)
+        self.assertEqual([v for v, _p in found], [2])
+
+        path, version = workfiles.next_workfile(self.shot, "blender", self.config)
+        self.assertEqual(version, 3, "numbering carries on from the old folder")
+        self.assertEqual(path.parent.name, "3DScenes",
+                         "but the new version goes into the new one")
+
+    def test_a_reader_finds_renders_from_every_application(self):
+        made = []
+        for dcc, version in (("blender", 1), ("nuke", 2), (None, 3)):
+            folder = workfiles.render_dir(self.shot.at_version(version), "main",
+                                          self.config, dcc)
+            folder.mkdir(parents=True)
+            (folder / ("x_v%03d.1001.exr" % version)).write_bytes(b"x")
+            made.append(version)
+        found = [v for v, *_rest in workfiles.render_versions(self.shot, "main",
+                                                              self.config)]
+        self.assertEqual(found, made,
+                         "3DRenders, 2DRenders and the old place alike")
+        mine = [v for v, *_rest in workfiles.render_versions(
+            self.shot, "main", self.config, "nuke")]
+        self.assertEqual(mine, [2], "and one application's alone when asked")
+
+    def test_a_master_scene_sits_beside_its_versions(self):
+        from BB_core import master
+
+        version = workfiles.work_file(self.asset, "blender", 8, self.config)
+        version.parent.mkdir(parents=True)
+        version.write_bytes(b"v8")
+        copied = master.set_master_scene(self.asset, "blender", self.config)
+        self.assertEqual(copied.name, "knife_master.blend")
+        self.assertEqual(copied.parent, version.parent)
+        self.assertEqual(copied.read_bytes(), b"v8")
+        self.assertEqual(
+            [v for v, _p in workfiles.list_workfiles(self.asset, "blender",
+                                                     self.config)],
+            [8], "the master is not mistaken for a version")
+
+    def test_a_render_master_lands_in_its_render_folder(self):
+        from BB_core import master
+
+        folder = workfiles.render_dir(self.asset, "main", self.config, "blender")
+        folder.mkdir(parents=True)
+        for frame in (1, 2):
+            (folder / ("knife_v008.%04d.exr" % frame)).write_bytes(b"x")
+
+        # The Set Master button knows the task, not which application rendered.
+        link, skipped = master.set_master(self.asset, "main", self.config)
+        self.assertEqual(link.parent.name, "3DRenders")
+        self.assertEqual(skipped, [])
+        found = master.master_frames(self.asset.at_version(1), "main", self.config)
+        self.assertIsNotNone(found)
+        self.assertEqual(found[1:], (1, 2))
 
 
 class TestSavedKeysAreKept(unittest.TestCase):

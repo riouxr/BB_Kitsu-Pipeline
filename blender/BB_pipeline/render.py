@@ -149,7 +149,7 @@ def target(context, kind):
 
     workfiles = session.workfiles_module
     try:
-        directory = workfiles.render_dir(entity_context, stream, config)
+        directory = workfiles.render_dir(entity_context, stream, config, 'blender')
     except Exception as error:
         raise RenderSetup(str(error))
 

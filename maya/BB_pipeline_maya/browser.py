@@ -176,6 +176,7 @@ class Browser(object):
         self._task_id = ''
         self._authoring = True
         self._renders = []
+        self._rows = []
 
     # -- filling in -----------------------------------------------------------
 
@@ -454,14 +455,27 @@ class Browser(object):
         config = session.config_for(entity_context)
         fallback = self._entity_pixmap()
 
+        # The task's master first, when there is one: the scene other tasks
+        # read, whatever version it holds. It opens, and imports, like any
+        # other row.
+        self._rows = []
+        master_file = self._master_file(entity_context, config)
+        if master_file is not None:
+            item = QtWidgets.QListWidgetItem(
+                'Master    %s' % os.path.basename(str(master_file)))
+            self._decorate_master(item, entity_context, config, fallback)
+            self.versions.addItem(item)
+            self._rows.append(master_file)
+
         for version, path in reversed(found):
             item = QtWidgets.QListWidgetItem(
                 'v%03d    %s' % (version, os.path.basename(str(path))))
             self._decorate(item, entity_context, version, config, fallback)
             self.versions.addItem(item)
+            self._rows.append(path)
 
         if found:
-            self.versions.setCurrentRow(0)
+            self.versions.setCurrentRow(len(self._rows) - len(found))
             self.new_button.setText('New v%03d' % (found[-1][0] + 1))
         else:
             self.new_button.setText('Create v001')
@@ -533,11 +547,32 @@ class Browser(object):
 
     def _selected_path(self):
         row = self.versions.currentRow()
-        found = state.workfiles
-        if row < 0 or not found:
+        rows = getattr(self, '_rows', None) or []
+        if row < 0 or row >= len(rows):
             return ''
-        # The list is newest first; the store is oldest first.
-        return str(list(reversed(found))[row][1])
+        return str(rows[row])
+
+    def _master_file(self, entity_context, config):
+        from BB_core import master
+        try:
+            return master.master_scene(entity_context, session.DCC, config)
+        except Exception:
+            return None
+
+    def _decorate_master(self, item, entity_context, config, fallback):
+        from BB_core import master
+        picture = None
+        try:
+            picture = thumbnails.from_file(
+                master.master_thumb_file(entity_context, session.DCC, config),
+                width=VERSION_ICON_WIDTH)
+        except Exception:
+            picture = None
+        if picture is None:
+            picture = fallback
+        if picture is not None:
+            from PySide6 import QtGui
+            item.setIcon(QtGui.QIcon(picture))
 
     def _open(self):
         path = self._selected_path()
@@ -757,20 +792,35 @@ def show_browser():
 
 # -- the publish prompt ------------------------------------------------------
 
-def ask_to_publish(path):
-    '''Ask for a comment and a status, then post them.'''
-    entity_context, _source = stamp.read_current()
-    if publish.why_not(entity_context):
-        return
+def ask_save_choices(entity_context, path, title='Update Kitsu',
+                     ok_text='OK'):
+    '''Ask what a save should also do. Returns the choices, or None.
 
+    None is Cancel, and a caller given None does nothing at all - which is
+    what lets Save Next Version ask before it writes anything, rather than
+    writing the version and then asking about it.
+
+    Shown even when there is nowhere to publish to: whether the version
+    becomes the master is a question of its own, asked on every save.
+    '''
     _QtCore, QtWidgets = _qt()
 
     dialog = QtWidgets.QDialog(_parent())
-    dialog.setWindowTitle('Update Kitsu')
+    dialog.setWindowTitle(title)
     dialog.setMinimumWidth(420)
 
     layout = QtWidgets.QVBoxLayout(dialog)
-    layout.addWidget(QtWidgets.QLabel(entity_context.versioned()))
+    layout.addWidget(QtWidgets.QLabel(os.path.basename(str(path))))
+
+    blocked = publish.why_not(entity_context)
+    to_kitsu = QtWidgets.QCheckBox('Publish to Kitsu')
+    to_kitsu.setChecked(not blocked)
+    to_kitsu.setEnabled(not blocked)
+    layout.addWidget(to_kitsu)
+    if blocked:
+        why = QtWidgets.QLabel('Nothing goes to Kitsu: %s' % blocked)
+        why.setWordWrap(True)
+        layout.addWidget(why)
 
     comment = QtWidgets.QPlainTextEdit(publish.default_comment(path))
     comment.setMaximumHeight(90)
@@ -796,29 +846,73 @@ def ask_to_publish(path):
         snapshot.setText('No viewport to snapshot')
     layout.addWidget(snapshot)
 
+    def follow(_state=0):
+        for widget in (comment, status, snapshot):
+            widget.setEnabled(to_kitsu.isChecked()
+                              and (widget is not snapshot or bool(source)))
+    to_kitsu.stateChanged.connect(follow)
+    follow()
+
+    as_master = QtWidgets.QCheckBox('Save as Master')
+    as_master.setToolTip("Also copy this over the task's master - the one "
+                         "scene other tasks reference, whatever version it holds")
+    as_master.setChecked(True)
+    layout.addWidget(as_master)
+
     box = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    box.button(QtWidgets.QDialogButtonBox.Ok).setText(ok_text)
     box.accepted.connect(dialog.accept)
     box.rejected.connect(dialog.reject)
     layout.addWidget(box)
 
     if dialog.exec() != QtWidgets.QDialog.Accepted:
-        return
+        return None
 
-    picture, problem = (capture.snapshot() if snapshot.isChecked()
-                        else (None, ''))
-    try:
-        note = publish.send(entity_context, path, comment=comment.toPlainText(),
-                            task_status_id=status.currentData(), preview=picture)
-    finally:
-        if picture:
-            capture.discard(picture)
+    return {'publish': to_kitsu.isChecked() and not blocked,
+            'comment': comment.toPlainText(),
+            'status': status.currentData(),
+            'snapshot': snapshot.isChecked() and bool(source),
+            'master': as_master.isChecked()}
+
+
+def carry_out(choices, entity_context, path):
+    '''Do what ask_save_choices was told, for a version already on disk.'''
+    notes = []
+    if choices.get('master'):
+        notes.append(scenes.make_master(entity_context, path))
+
+    problem = ''
+    if choices.get('publish'):
+        picture, problem = (capture.snapshot() if choices.get('snapshot')
+                            else (None, ''))
+        try:
+            notes.append(publish.send(
+                entity_context, path, comment=choices.get('comment', ''),
+                task_status_id=choices.get('status'), preview=picture,
+                master=choices.get('master', False)))
+        finally:
+            if picture:
+                capture.discard(picture)
 
     # A snapshot that was asked for and did not happen has to say so. Silently
     # posting a comment with no picture looks exactly like the feature working.
     if problem:
         _warn('The comment was posted, but no thumbnail.' + chr(10) * 2 + problem)
+    note = ' - '.join(n for n in notes if n)
     state.say(note)
+    return note
+
+
+def ask_to_publish(path):
+    '''After a version has been written: ask, then publish and make master.'''
+    entity_context, _source = stamp.read_current()
+    if entity_context is None:
+        return ''
+    choices = ask_save_choices(entity_context, path)
+    if choices is None:
+        return ''
+    return carry_out(choices, entity_context, path)
 
 
 def ask_to_publish_render(entity_context=None):
@@ -839,12 +933,11 @@ def ask_to_publish_render(entity_context=None):
 
     try:
         config = session.config_for(entity_context)
-        pattern = workfiles.render_output(entity_context, 'main', config)
+        pattern, found = rendered(entity_context, config)
     except Exception as error:
         _warn('No render path for this version (%s)' % error)
         return ''
 
-    found = review.rendered_frames(str(pattern))
     if not found:
         _warn('Nothing rendered there yet:' + chr(10) * 2 + str(pattern))
         return ''
@@ -855,12 +948,60 @@ def ask_to_publish_render(entity_context=None):
         return ''
 
     first, last = review.frame_span(str(pattern), found)
-    text = '%s rendered %d-%d' % (entity_context.versioned(), first, last)
 
-    note = publish.send(entity_context, str(frame), comment=text,
-                        preview=str(frame))
+    dialog = QtWidgets.QDialog(_parent())
+    dialog.setWindowTitle('Publish Render Frame')
+    dialog.setMinimumWidth(420)
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.addWidget(QtWidgets.QLabel('%s - frame %s of %d-%d' % (
+        entity_context.versioned(), os.path.basename(frame), first, last)))
+    comment = QtWidgets.QPlainTextEdit(
+        '%s rendered %d-%d' % (entity_context.versioned(), first, last))
+    comment.setMaximumHeight(90)
+    layout.addWidget(comment)
+    as_master = QtWidgets.QCheckBox('Save as Master')
+    as_master.setToolTip("Also copy these frames into this task's Master - "
+                         "the render other tasks read, whatever version")
+    as_master.setChecked(True)
+    layout.addWidget(as_master)
+    box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    layout.addWidget(box)
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return ''
+
+    flagged = ''
+    if as_master.isChecked():
+        from BB_core import master
+        try:
+            master.set_master(entity_context, 'main', config, 'maya')
+            flagged = ' and made master'
+        except Exception as error:
+            flagged = ' - but it could not be made master (%s)' % error
+
+    note = publish.send(entity_context, str(frame), comment=comment.toPlainText(),
+                        preview=str(frame), master=as_master.isChecked())
+    note += flagged
     state.say(note)
     return note
+
+
+def rendered(entity_context, config=None):
+    """``(pattern, frames)`` for what this version rendered from Maya.
+
+    Any extension. The pipeline aims Maya's output folder and file name, but
+    the image format is whatever Maya's own render settings say - so the
+    frames are looked for by name and number, not by the stream's ext. The
+    prefix Maya renders from ends at the name and a dot, with no frame
+    placeholder in it, and looking for that found nothing, ever.
+    """
+    config = config or session.config_for(entity_context)
+    folder = workfiles.render_dir(entity_context, 'main', config, 'maya')
+    stem = workfiles.render_stem(entity_context, config)
+    pattern = str(folder / (stem + '.####.*'))
+    return pattern, review.rendered_frames(pattern)
 
 
 def show_settings():

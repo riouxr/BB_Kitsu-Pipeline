@@ -165,13 +165,21 @@ def task_items(self, context):
     return _task_items
 
 
+MASTER = 'MASTER'
+
+
 def version_items(self, context):
-    '''Scene files on disk for the current task, newest first.'''
+    '''Scene files on disk for the current task: the master, then newest first.'''
     global _version_items
-    _version_items = [
+    items = []
+    master_file = getattr(session.state, 'master_file', None)
+    if master_file:
+        items.append((MASTER, 'Master', master_file.name))
+    items += [
         (str(version), 'v%03d' % version, path.name)
         for version, path in reversed(session.state.workfiles)
-    ] or [('NONE', 'no scene file yet', '')]
+    ]
+    _version_items = items or [('NONE', 'no scene file yet', '')]
     return _version_items
 
 
@@ -320,6 +328,12 @@ class BB_BrowserProperties(PropertyGroup):
         default='',
     )
 
+    as_master: BoolProperty(
+        name='Save as Master',
+        description="Also copy this over the task's master - the one file (or render) other tasks link, which keeps its name whatever version it holds",
+        default=True,
+    )
+
     review_as: EnumProperty(
         name='Send',
         description='What to publish for a render of more than one frame',
@@ -369,6 +383,7 @@ def get(context=None):
 
 def clear_workfiles(context=None):
     session.state.workfiles = []
+    session.state.master_file = None
     clear(get(context), 'version')
 
 
@@ -383,6 +398,10 @@ def selected_version(context=None):
     props = get(context)
     if not _valid(props.version):
         return None
+    if props.version == MASTER:
+        # Open, Append and Link act on the master exactly as on a version.
+        master_file = getattr(session.state, 'master_file', None)
+        return (0, master_file) if master_file else None
     wanted = int(props.version)
     return next((entry for entry in session.state.workfiles if entry[0] == wanted), None)
 

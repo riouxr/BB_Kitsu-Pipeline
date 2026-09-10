@@ -44,7 +44,7 @@ def main():
     sys.path.insert(0, REPO)
 
     import BB_pipeline_maya as package
-    from BB_core import settings
+    from BB_core import settings, workfiles
     settings.save({'work_root': work_root, 'render_root': work_root,
                    'publish_on_save': True})
 
@@ -221,6 +221,57 @@ def main():
           'with the device aspect, so the render is not the wrong shape')
     check(scenesync.differences(wanted) == [],
           'and re-checking finds nothing left to change')
+
+    # -- scenes and renders in Maya's own folders ------------------------
+    scene_dir = os.path.dirname(made)
+    check(os.path.basename(scene_dir) == '3DScenes',
+          "Maya scenes go into the task's 3DScenes folder (%s)" % scene_dir)
+    check('3DRenders' in computed.replace(chr(92), '/').split('/'),
+          'and Maya renders into 3DRenders (%s)' % computed)
+
+    # Publish Render Frame used to look for the output prefix itself -
+    # a name ending in a dot, with no frame number in it - and so never
+    # found a single frame. It looks for the frames now, in whatever
+    # format Maya's own render settings wrote them.
+    from BB_pipeline_maya import browser as maya_browser
+    stamped_now = stamp.read()
+    out_dir = workfiles.render_dir(stamped_now, 'main', settings.config(), 'maya')
+    os.makedirs(str(out_dir), exist_ok=True)
+    stem_now = workfiles.render_stem(stamped_now, settings.config())
+    for frame in (1001, 1002, 1003):
+        open(os.path.join(str(out_dir), '%s.%04d.png' % (stem_now, frame)), 'wb').write(b'x')
+    _pattern, rendered_now = maya_browser.rendered(stamped_now)
+    check(len(rendered_now) == 3,
+          'Publish Render Frame finds what Maya rendered (%d frames)'
+          % len(rendered_now))
+
+    # -- Save Next Version asks first, and Cancel means nothing happened --
+    real_ask = maya_browser.ask_save_choices
+    asked = []
+    try:
+        maya_browser.ask_save_choices = (
+            lambda entity_context, path, **kwargs: asked.append(
+                (os.path.basename(str(path)), kwargs.get('ok_text'))) or None)
+        before = sorted(os.listdir(scene_dir))
+        package.save_next_version()
+        check(asked and asked[0] == ('screwdriver_v003.ma', 'Save v003'),
+              'Save Next Version asks first, naming the version (%s)' % asked)
+        check(sorted(os.listdir(scene_dir)) == before,
+              'and Cancel writes nothing - no scene, no master')
+
+        maya_browser.ask_save_choices = (
+            lambda entity_context, path, **kwargs: {
+                'publish': False, 'comment': '', 'status': None,
+                'snapshot': False, 'master': True})
+        package.save_next_version()
+        check(os.path.isfile(os.path.join(scene_dir, 'screwdriver_v003.ma')),
+              'OK saves the version it named')
+        check(os.path.isfile(os.path.join(scene_dir, 'screwdriver_master.ma')),
+              'and Save as Master copies it beside the versions')
+        check([v for v, _p in fetch.list_versions(asset)] == [1, 2, 3],
+              'the master is not listed as a version')
+    finally:
+        maya_browser.ask_save_choices = real_ask
 
     # -- the thumbnail grab, with no viewport to grab ----------------------
     picture, problem = capture.snapshot()

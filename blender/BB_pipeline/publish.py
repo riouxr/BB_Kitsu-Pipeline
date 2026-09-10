@@ -14,7 +14,7 @@ is not always fast and a save must never block on the network: the file is
 already on disk by the time this starts, so a failed publish costs a comment,
 never work.
 '''
-from .BB_core.versioning import tag_comment
+from .BB_core.versioning import format_master_tag, tag_comment
 
 from . import capture, prefs, session
 
@@ -42,7 +42,8 @@ def default_comment(path):
     return '%s saved from Blender' % path.name
 
 
-def send(context, entity_context, path, comment='', task_status_id=None):
+def send(context, entity_context, path, comment='', task_status_id=None,
+         master=False):
     '''Post a comment and a viewport preview for a version that was saved.
 
     Returns a short status string for the operator to report. Never raises -
@@ -59,6 +60,10 @@ def send(context, entity_context, path, comment='', task_status_id=None):
     client = state.client
     task_id = entity_context.task_id
     comment = tag_comment(comment or default_comment(path), entity_context.version)
+    if master:
+        # The durable record of which version is master, read back for the
+        # "Master (v009)" label the Nuke and Resolve browsers show.
+        comment = '%s %s' % (comment, format_master_tag(entity_context.version))
 
     preview = None
     if preferences.preview_on_save:

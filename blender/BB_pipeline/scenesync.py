@@ -144,7 +144,8 @@ def output_path(entity_context, context=None):
 
     try:
         config = prefs.config(context)
-        return str(workfiles.render_output(entity_context, 'main', config))
+        return str(workfiles.render_output(entity_context, 'main', config,
+                                           dcc='blender'))
     except Exception:
         return None
 

@@ -71,7 +71,8 @@ def output_path(entity_context, stream='main'):
 
     # The core builds the same path Blender renders to; %04d is what Nuke
     # wants where the core writes ####.
-    path = workfiles.render_file(entity_context, stream, frame='%04d', config=config)
+    path = workfiles.render_file(entity_context, stream, frame='%04d',
+                                 config=config, dcc='nuke')
     return str(path).replace('\\', '/')
 
 

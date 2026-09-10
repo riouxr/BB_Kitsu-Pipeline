@@ -191,6 +191,16 @@ class EntityContext:
         folders = list(PurePath(str(path)).parent.parts)
         entity_type = ""
 
+        # A scene file sits one folder below its task - 3DScenes, 2DScene -
+        # and that folder names the application, not anything in Kitsu. Left
+        # in, every folder is read one level off: the shot taken for the
+        # sequence, and "3DScenes" for the task.
+        scene_folders = {str(settings.get("scene_folder")).lower()
+                         for settings in config.dccs().values()
+                         if isinstance(settings, dict) and settings.get("scene_folder")}
+        if folders and folders[-1].lower() in scene_folders:
+            folders = folders[:-1]
+
         for key, kind in (("work_dir_asset", "asset"), ("work_dir_shot", "shot")):
             template = config.paths.get(key) or ""
             tokens = [part for part in template.replace("\\", "/").split("/") if part]

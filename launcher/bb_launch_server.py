@@ -188,8 +188,19 @@ def _handle_set_master(query):
 
     from BB_core import master, versioning
 
-    context, config, _dcc = _resolve(task_id)
+    context, config, dcc = _resolve(task_id)
     versioned_context = context.at_version(version)
+
+    # The scene file too, not only the renders: flagging a version master is
+    # about the version, and what another task links is its scene. Resolve
+    # has no scene files - its versions are projects in its own database.
+    scene_note = ''
+    if dcc and dcc != "resolve":
+        try:
+            made = master.set_master_scene(versioned_context, dcc, config)
+            scene_note = made.name
+        except ValueError:
+            pass  # no scene file saved for this version
 
     from resolve.BB_pipeline_resolve import resolve_ops
 
@@ -210,8 +221,9 @@ def _handle_set_master(query):
         except Exception:
             pass
 
-    if not copied:
-        return 502, {"error": "no render found for v%d, nothing copied" % version}
+    if not copied and not scene_note:
+        return 502, {"error": "no render or scene found for v%d, nothing copied"
+                              % version}
 
     client = _get_client()
     client.add_comment(task_id, versioning.format_master_tag(version))

@@ -48,8 +48,11 @@ work_file = "{versioned}.{ext}"
 # the root, the entity and task are folders, so the file only has to name the
 # thing and its version - enough to still be identifiable if it is copied out
 # on its own, and no more.
-render_dir_shot = "{group}/{entity}/{task}/Render/{stream}/v{version}"
-render_dir_asset = "assets/{group}/{entity}/{task}/Render/{stream}/v{version}"
+# {renders} is the rendering application's own folder - 3DRenders for Blender
+# and Maya, 2DRenders for Nuke and Resolve, set per DCC below - so a comp's
+# renders and the lighting renders it reads never share a version folder.
+render_dir_shot = "{group}/{entity}/{task}/Render/{renders}/{stream}/v{version}"
+render_dir_asset = "assets/{group}/{entity}/{task}/Render/{renders}/{stream}/v{version}"
 render_stem = "{entity}_v{version}"
 # Except a shot's, which carry the show and the sequence as well. Shot renders
 # are the ones that leave the folders that name them - into an edit, a review,
@@ -72,16 +75,26 @@ render_file = "{stem}.{frame}.{ext}"
 # Kitsu department the task type belongs to. Leave `departments` out to offer
 # every task. Names are matched case-insensitively; a task type with no
 # department is only offered when `departments` is absent.
+# scene_folder and render_folder: each application's scene files and renders
+# get a folder of their own inside the task, rather than sitting loose in it
+# beside every other application's. Leave one out to keep that application's
+# files directly in the task folder.
 [dcc.blender]
 ext = "blend"
+scene_folder = "3DScenes"
+render_folder = "3DRenders"
 departments = ["Animation", "FX", "Layout", "Lighting", "Modeling"]
 
 [dcc.nuke]
 ext = "nk"
+scene_folder = "2DScene"
+render_folder = "2DRenders"
 departments = ["Compositing", "2D"]
 
 [dcc.maya]
 ext = "ma"
+scene_folder = "3DScenes"
+render_folder = "3DRenders"
 # ASCII rather than .mb on purpose: the context stamp lives in fileInfo, and
 # in a .ma that is a greppable line of text. A stamp that can be read - and
 # repaired - without opening Maya has already paid for the file size once.
@@ -95,6 +108,7 @@ departments = ["Animation", "FX", "Layout", "Lighting", "Modeling",
 
 [dcc.resolve]
 ext = "drp"
+render_folder = "2DRenders"
 # Resolve's own work, not copy-pasted from Nuke's list: grading and
 # editorial is what it is actually used for. Deliberately does NOT claim
 # Compositing/2D - Nuke already does, and a task both DCCs think they author

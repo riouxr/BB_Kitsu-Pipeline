@@ -140,14 +140,60 @@ def _ask_to_publish(context, path):
     is skipped rather than raised - the file is saved either way, and
     Kitsu > Update Kitsu still sends it.
     """
-    if publish.why_not(context, stamp.read_current()[0]):
-        return
     if bpy.app.background or getattr(bpy.context, 'window', None) is None:
         return
     try:
         bpy.ops.bb.publish_save('INVOKE_DEFAULT', filepath=str(path))
     except RuntimeError as error:
         print('BB Kitsu Pipeline: could not open the publish dialog (%s)' % error)
+
+
+def _make_master(context, entity_context, filepath):
+    """Copy a saved version over the task's master scene. Returns a note."""
+    from .BB_core import master as master_mod
+
+    if entity_context is None:
+        return 'no pipeline context, so no master'
+    try:
+        made = master_mod.set_master_scene(entity_context, 'blender',
+                                           prefs.config(context), source=filepath)
+    except Exception as error:
+        return 'could not make master (%s)' % error
+    return 'master is now %s (%s)' % (entity_context.versioned(), made.name)
+
+
+def _draw_publish_choices(layout, context, entity_context, operator,
+                          publish_prop=None):
+    """The comment, status, preview and master choices every save offers.
+
+    ``publish_prop`` is the operator's own publish tick, when it has one; the
+    publishing controls follow it, and all of them are shown greyed out with
+    the reason when there is nowhere to publish to.
+    """
+    props = properties.get(context)
+    blocked = publish.why_not(context, entity_context)
+
+    column = layout.column()
+    column.use_property_split = True
+
+    if publish_prop:
+        row = column.row()
+        row.enabled = not blocked
+        row.prop(operator, publish_prop)
+    if blocked:
+        column.label(text='Nothing goes to Kitsu: %s' % blocked, icon='INFO')
+
+    publishing = column.column()
+    publishing.enabled = not blocked and (
+        getattr(operator, publish_prop) if publish_prop else True)
+    publishing.prop(props, 'comment')
+    publishing.prop(props, 'task_status')
+    preferences = prefs.get(context)
+    if preferences is not None:
+        publishing.prop(preferences, 'preview_on_save')
+
+    column.separator()
+    column.prop(operator, 'as_master')
 
 
 def _core_ready(operator):
@@ -409,6 +455,9 @@ class BB_OT_browser(Operator):
             fallback = thumbnails.icon_id(
                 state.entity(props.entity_id, props.is_asset))
             column = listing.column(align=True)
+            if state.master_file:
+                self._draw_master_row(column, props, entity_context, config,
+                                      fallback)
             for version, path in reversed(state.workfiles):
                 self._draw_version_row(column, props, entity_context, version,
                                        path, config, workfiles, fallback)
@@ -447,6 +496,34 @@ class BB_OT_browser(Operator):
         linking.enabled = has_files
         linking.operator('bb.append_workfile', text='Append', icon='APPEND_BLEND')
         linking.operator('bb.link_workfile', text='Link', icon='LINK_BLEND')
+
+    def _draw_master_row(self, column, props, entity_context, config,
+                         fallback=0):
+        '''The task's master scene, above the versions it was copied from.'''
+        from .BB_core import master as master_mod
+
+        chosen = props.version == properties.MASTER
+        row = column.row(align=True)
+        row.emboss = 'NORMAL' if chosen else 'NONE'
+
+        try:
+            thumb = master_mod.master_thumb_file(entity_context, 'blender',
+                                                 config)
+        except Exception:
+            thumb = None
+        icon_id = ((thumbnails.version_icon(thumb) if thumb and thumb.is_file()
+                    else 0) or fallback)
+        if icon_id:
+            row.template_icon(icon_value=icon_id, scale=VERSION_ICON_SCALE)
+        else:
+            spacer = row.row()
+            spacer.enabled = False
+            spacer.label(text='', icon='IMAGE_DATA')
+
+        button = row.operator('bb.tree_pick', text='Master', icon='SOLO_ON',
+                              depress=chosen)
+        button.kind = 'version'
+        button.identifier = properties.MASTER
 
     def _draw_version_row(self, column, props, entity_context, version, path,
                           config, workfiles, fallback=0):
@@ -488,10 +565,13 @@ class BB_OT_browser(Operator):
 class BB_OT_publish_save(Operator):
     bl_idname = 'bb.publish_save'
     bl_label = 'Update Kitsu'
-    bl_description = 'Post a comment, a status and a viewport preview for this version'
+    bl_description = ('Post a comment, a status and a viewport preview for '
+                      'this version, and make it the master')
     bl_options = {'REGISTER', 'INTERNAL'}
 
     filepath: StringProperty(options={'HIDDEN'})
+    as_master: BoolProperty(name='Save as Master', default=True,
+                            description="Also copy this over the task's master - the one file (or render) other tasks link, which keeps its name whatever version it holds", options={'SKIP_SAVE'})
 
     def _context(self):
         return stamp.read_current()[0]
@@ -506,14 +586,12 @@ class BB_OT_publish_save(Operator):
             return {'CANCELLED'}
 
         entity_context = self._context()
-
-        blocked = publish.why_not(context, entity_context)
-        if blocked:
-            # Nothing to publish to; say so and do not ask for a comment that
-            # has nowhere to go.
-            self.report({'INFO'}, blocked)
+        if entity_context is None:
+            self.report({'ERROR'}, 'No pipeline context on this scene')
             return {'CANCELLED'}
 
+        # Shown even with nowhere to publish to: making the version master is
+        # a question of its own, and every save is asked it.
         props = properties.get(context)
         props.comment = publish.default_comment(Path(self.filepath))
         properties.clear(props, 'task_status')
@@ -528,23 +606,24 @@ class BB_OT_publish_save(Operator):
         if entity_context is not None and entity_context.is_complete():
             layout.label(text=entity_context.versioned(), icon='FILE_BLEND')
 
-        column = layout.column()
-        column.use_property_split = True
-        column.prop(props, 'comment')
-        column.prop(props, 'task_status')
-
-        preferences = prefs.get(context)
-        row = column.row()
-        row.prop(preferences, 'preview_on_save')
+        _draw_publish_choices(layout, context, entity_context, self)
 
     def execute(self, context):
         props = properties.get(context)
         entity_context = self._context()
 
-        note = publish.send(context, entity_context, Path(self.filepath),
-                            comment=props.comment,
-                            task_status_id=properties.selected_status_id(context))
-        self.report({'INFO'}, note or 'nothing sent to Kitsu')
+        notes = []
+        if self.as_master:
+            notes.append(_make_master(context, entity_context, self.filepath))
+
+        if not publish.why_not(context, entity_context):
+            notes.append(publish.send(
+                context, entity_context, Path(self.filepath),
+                comment=props.comment,
+                task_status_id=properties.selected_status_id(context),
+                master=self.as_master))
+        self.report({'INFO'}, ' - '.join(n for n in notes if n)
+                    or 'nothing sent to Kitsu')
         return {'FINISHED'}
 
 
@@ -728,34 +807,84 @@ class BB_OT_save_next_version(Operator):
 
     # Off when the version is being cut by a publish that has just posted its
     # own comment: asking to publish again is how one piece of work ends up
-    # as two revisions in Kitsu.
+    # as two revisions in Kitsu. Such a cut also makes no master - the
+    # publish that cut it had its own master choice.
     announce: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+    publish_to_kitsu: BoolProperty(
+        name='Publish to Kitsu', default=True, options={'SKIP_SAVE'},
+        description='Post the comment, status and preview below on the task')
+    as_master: BoolProperty(name='Save as Master', default=True,
+                            description="Also copy this over the task's master - the one file (or render) other tasks link, which keeps its name whatever version it holds", options={'SKIP_SAVE'})
+    # Set by invoke: only a dialog somebody answered publishes. A script
+    # running this saves - and makes the master - but never posts in their
+    # name with a comment nobody wrote.
+    confirmed: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+    next_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
         return bool(bpy.data.filepath)
+
+    def _next(self, context):
+        """``(context, source, path, version, config)`` for the save to come.
+
+        From the task, not from the open file's own folder: a scene opened
+        from the old task-folder layout still versions up into its
+        application's scene folder, and a master - whose name carries no
+        version at all - versions up from its stamp like anything else.
+        """
+        shot_context, source = stamp.read_current()
+        if shot_context is None:
+            raise ValueError('No pipeline context on this scene')
+        try:
+            config = prefs.config(context)
+        except Exception:
+            config = None
+        path, version = session.workfiles_module.next_workfile(
+            shot_context, 'blender', config)
+        return shot_context, source, path, version, config
+
+    def invoke(self, context, event):
+        if not _core_ready(self):
+            return {'CANCELLED'}
+        if not self.announce:
+            return self.execute(context)
+
+        # Asked before anything is written. The version is only claimed, the
+        # file only saved and the master only replaced once OK is pressed -
+        # Cancel leaves the disk exactly as it was.
+        try:
+            shot_context, _source, path, version, _config = self._next(context)
+        except Exception as error:
+            self.report({'ERROR'}, str(error))
+            return {'CANCELLED'}
+
+        props = properties.get(context)
+        props.comment = publish.default_comment(path)
+        properties.clear(props, 'task_status')
+        self.publish_to_kitsu = not publish.why_not(
+            context, shot_context.at_version(version))
+        self.next_name = path.name
+        self.confirmed = True
+        return context.window_manager.invoke_props_dialog(
+            self, width=460, title='Save Next Version',
+            confirm_text='Save v%03d' % version)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text='Saves %s' % self.next_name, icon='FILE_BLEND')
+        entity_context = stamp.read_current()[0]
+        _draw_publish_choices(layout, context, entity_context, self,
+                              publish_prop='publish_to_kitsu')
 
     def execute(self, context):
         if not _core_ready(self):
             return {'CANCELLED'}
 
         try:
-            config = prefs.config(context)
-        except Exception:
-            config = None
-
-        try:
-            path, version = session.versioning_module.bump(bpy.data.filepath, config)
-        except ValueError:
-            self.report(
-                {'ERROR'},
-                'This file is not named to the pipeline scheme - use the Shot '
-                'Browser to start one that is')
-            return {'CANCELLED'}
-
-        shot_context, source = stamp.read_current()
-        if shot_context is None:
-            self.report({'ERROR'}, 'No pipeline context on this scene')
+            shot_context, source, path, version, config = self._next(context)
+        except Exception as error:
+            self.report({'ERROR'}, str(error))
             return {'CANCELLED'}
 
         shot_context = shot_context.at_version(version)
@@ -770,17 +899,29 @@ class BB_OT_save_next_version(Operator):
         _save_with_previews(context, path, shot_context)
 
         session.state.context = shot_context
+
+        notes = []
+        if self.announce and self.as_master:
+            notes.append(_make_master(context, shot_context, str(path)))
         fetch.refresh_workfiles()
+
+        if (self.confirmed and self.publish_to_kitsu
+                and not publish.why_not(context, shot_context)):
+            props = properties.get(context)
+            notes.append(publish.send(
+                context, shot_context, path, comment=props.comment,
+                task_status_id=properties.selected_status_id(context),
+                master=self.as_master))
 
         if source == 'filename':
             self.report({'WARNING'},
                         'Saved %s - context recovered from the filename, so it '
                         'carries no Kitsu ids yet' % path.name)
         else:
+            extra = [moved] + notes if moved else notes
             self.report({'INFO'}, 'Saved %s%s'
-                        % (path.name, ' - %s' % moved if moved else ''))
-        if self.announce:
-            _ask_to_publish(context, path)
+                        % (path.name, ' - %s' % ' - '.join(n for n in extra if n)
+                           if any(extra) else ''))
         return {'FINISHED'}
 
 
@@ -869,7 +1010,8 @@ class BB_OT_submit_render(Operator):
 
         props = properties.get(context)
         note = review.submit(context, comment=props.comment,
-                             task_status_id=properties.selected_status_id(context))
+                             task_status_id=properties.selected_status_id(context),
+                             master=props.as_master)
 
         if note.startswith('uploading'):
             props.comment = ''
@@ -897,7 +1039,13 @@ class BB_OT_open_work_folder(Operator):
             return {'CANCELLED'}
 
         try:
-            folder = session.workfiles_module.work_dir(shot_context, prefs.config(context))
+            config = prefs.config(context)
+            workfiles = session.workfiles_module
+            # The scene folder once there is one; the task folder until then,
+            # and for a task whose files have not been moved into it.
+            folder = workfiles.scene_dir(shot_context, 'blender', config)
+            if not folder.is_dir():
+                folder = workfiles.work_dir(shot_context, config)
         except session.workfiles_module.RootNotConfigured as error:
             self.report({'ERROR'}, str(error))
             return {'CANCELLED'}

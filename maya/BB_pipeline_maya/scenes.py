@@ -243,12 +243,14 @@ def create_version(entity_context, from_current=False):
     return str(path), note
 
 
-def save_next_version():
-    '''Save the open scene as the next version of itself. Returns its path.'''
-    cmds = _cmds()
+def upcoming_version():
+    '''``(path, version)`` the next Save Next Version would write, or raises.
 
-    open_path = current_path()
-    if not open_path:
+    From the task, not from the open scene's folder: a scene opened from the
+    old task-folder layout versions up into 3DScenes, and a master - whose
+    name carries no version - versions up from its stamp.
+    '''
+    if not current_path():
         raise SceneError('Save this scene once before versioning it')
 
     entity_context, _source = stamp.read_current()
@@ -259,12 +261,37 @@ def save_next_version():
         config = session.config_for(entity_context)
     except Exception:
         config = None
-
     try:
-        path, version = versioning.bump(open_path, config)
-    except ValueError:
-        raise SceneError('This scene is not named to the pipeline scheme - '
-                         'use the Kitsu browser to start one that is')
+        return workfiles.next_workfile(entity_context, session.DCC, config)
+    except Exception as error:
+        raise SceneError(str(error))
+
+
+def make_master(entity_context, path=None):
+    '''Copy a saved version over the task's master scene. Returns a note.'''
+    from BB_core import master
+
+    if entity_context is None:
+        return 'no Kitsu context, so no master'
+    try:
+        made = master.set_master_scene(entity_context, session.DCC,
+                                       session.config_for(entity_context),
+                                       source=path)
+    except Exception as error:
+        return 'could not make master (%s)' % error
+    return 'master is now %s (%s)' % (entity_context.versioned(), made.name)
+
+
+def save_next_version():
+    '''Save the open scene as the next version of itself. Returns its path.'''
+    cmds = _cmds()
+
+    path, version = upcoming_version()
+    entity_context, _source = stamp.read_current()
+    try:
+        config = session.config_for(entity_context)
+    except Exception:
+        config = None
 
     stamped = entity_context.at_version(version)
     stamp.write(stamped)

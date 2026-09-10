@@ -98,6 +98,33 @@ def work_dir(context, config=None):
         _template(config, "work_dir", context), context, config)
 
 
+def scene_folder(config, dcc):
+    """The folder one application keeps its scene files in, or ''."""
+    return str(config.dcc(dcc).get("scene_folder") or "") if dcc else ""
+
+
+def scene_folders(config):
+    """Every application's scene folder, for recognising one in a path."""
+    return sorted({str(settings.get("scene_folder"))
+                   for settings in config.dccs().values()
+                   if isinstance(settings, dict) and settings.get("scene_folder")})
+
+
+def scene_dir(context, dcc, config=None):
+    """Where one application's scene files for this entity and task live.
+
+    A folder of the application's own inside the task folder - 3DScenes,
+    2DScene - rather than the task folder itself, where a Blender scene, a
+    Nuke script, a render folder and a thumbnail cache all used to sit side
+    by side. An application with no scene_folder configured keeps the task
+    folder, which is also where every file from before this lives.
+    """
+    config = (config or Config()).for_project(context.project)
+    base = work_dir(context, config)
+    folder = scene_folder(config, dcc)
+    return base / folder if folder else base
+
+
 def work_file(context, dcc, version=None, config=None):
     """The scene file path for a given version of a context."""
     config = (config or Config()).for_project(context.project)
@@ -111,7 +138,7 @@ def work_file(context, dcc, version=None, config=None):
         versioned=context.versioned(version, config),
         ext=ext,
     )
-    return work_dir(context, config) / name
+    return scene_dir(context, dcc, config) / name
 
 
 def list_workfiles(context, dcc, config=None):
@@ -122,9 +149,22 @@ def list_workfiles(context, dcc, config=None):
     """
     config = config or Config()
     ext = config.dcc(dcc).get("ext", "")
-    return versioning.existing_versions(
-        work_dir(context, config), context.as_fields(), ext, config
-    )
+    fields = context.as_fields()
+    here = scene_dir(context, dcc, config)
+    found = versioning.existing_versions(here, fields, ext, config)
+
+    # Scene files from before each application had a folder of its own sat
+    # in the task folder itself. Still listed, so a task that has not been
+    # moved does not appear to have lost its work, and still counted, so the
+    # next version carries on from v008 rather than starting a second v001
+    # in the new folder.
+    legacy = work_dir(context, config)
+    if legacy != here:
+        known = {version for version, _path in found}
+        found = found + [(version, path) for version, path in
+                         versioning.existing_versions(legacy, fields, ext, config)
+                         if version not in known]
+    return sorted(found, key=lambda item: item[0])
 
 
 # The folder holding one small image per work version. A dot-folder beside
@@ -145,7 +185,14 @@ def thumb_file(context, dcc, version=None, config=None):
     config = (config or Config()).for_project(context.project)
     version = context.version if version is None else version
     name = "%s.png" % context.versioned(version, config)
-    return work_dir(context, config) / THUMB_DIR / name
+    wanted = scene_dir(context, dcc, config) / THUMB_DIR / name
+    if not wanted.exists():
+        # A version from before the scene folders keeps its picture where it
+        # was taken, beside it in the task folder.
+        legacy = work_dir(context, config) / THUMB_DIR / name
+        if legacy.exists():
+            return legacy
+    return wanted
 
 
 def save_thumb(context, dcc, source, version=None, config=None):
@@ -174,23 +221,66 @@ def next_workfile(context, dcc, config=None):
     Returns v001 for a shot with nothing on disk, so "open" and "create new"
     are the same code path with a different starting point.
     """
-    config = config or Config()
-    ext = config.dcc(dcc).get("ext", "")
-    version = versioning.next_version(
-        work_dir(context, config), context.as_fields(), ext, config
-    )
+    found = list_workfiles(context, dcc, config)
+    # One past the highest wherever it sits - old task folder or new scene
+    # folder - never a count, so deleting v002 cannot hand out v003 twice.
+    version = (found[-1][0] + 1) if found else 1
     return work_file(context, dcc, version, config), version
 
 
 # ── Renders ───────────────────────────────────────────────────────────────────
 
-def render_dir(context, stream="main", config=None):
+def render_folder(config, dcc):
+    """The folder one application renders into, or ''."""
+    return str(config.dcc(dcc).get("render_folder") or "") if dcc else ""
+
+
+def render_folders(config):
+    """Every application's render folder, and '' for renders made before any.
+
+    What a reader walks when it does not know - or care - which application
+    made a render: a comp reading the lighting renders, a viewer after the
+    newest frames whatever made them.
+    """
+    names = sorted({str(settings.get("render_folder"))
+                    for settings in config.dccs().values()
+                    if isinstance(settings, dict) and settings.get("render_folder")})
+    return names + [""]
+
+
+def render_dir(context, stream="main", config=None, dcc=None):
     """The version folder one output stream renders into.
 
     Every stream of a version sits under the same context, differing only by
     the stream folder - which is what makes main/proxy/offline/matte/plate
     derivable from one render instead of five separate setups.
+
+    ``dcc`` is the application rendering, and picks its render folder. With
+    none the render is filed as renders were before the folders existed -
+    which is also how a reader finds those.
     """
+    config = (config or Config()).for_project(context.project)
+    return _render_dir(context, stream, config, render_folder(config, dcc))
+
+
+def find_render_dir(context, stream="main", config=None):
+    """The version folder that actually holds this version's frames.
+
+    For a reader that knows the version but not which application rendered
+    it - an import, the Set Master button - each render folder is tried in
+    turn, and the pre-folder location last. When none exists the answer is
+    the pre-folder location, so a caller reporting "nothing there" names a
+    real path.
+    """
+    config = (config or Config()).for_project(context.project)
+    for renders in render_folders(config):
+        folder = _render_dir(context, stream, config, renders)
+        if folder.is_dir():
+            return folder
+    return _render_dir(context, stream, config, "")
+
+
+def _render_dir(context, stream, config, renders):
     config = (config or Config()).for_project(context.project)
     if stream not in config.streams:
         raise ValueError("unknown stream %r; configured: %s"
@@ -200,6 +290,7 @@ def render_dir(context, stream="main", config=None):
     filled = _fill(
         _template(config, "render_dir", context), context, config,
         stream=folder,
+        renders=renders,
         version=naming.format_version(context.version or 1, config),
         versioned=context.versioned(config=config),
     )
@@ -247,7 +338,7 @@ def render_stem(context, config=None):
         return _fill(config.paths["render_stem"], context, config, **extra)
 
 
-def render_output(context, stream="main", config=None):
+def render_output(context, stream="main", config=None, dcc=None):
     """Where a host application should point its own output, as a prefix.
 
     The version folder plus the version's name and a trailing dot, so a host
@@ -260,10 +351,10 @@ def render_output(context, stream="main", config=None):
     two that have to be kept in step.
     """
     config = (config or Config()).for_project(context.project)
-    return render_dir(context, stream, config) / (render_stem(context, config) + ".")
+    return render_dir(context, stream, config, dcc) / (render_stem(context, config) + ".")
 
 
-def render_versions(context, stream="main", config=None):
+def render_versions(context, stream="main", config=None, dcc=None):
     """Every rendered version of one stream on disk, oldest first.
 
     Returns ``[(version, pattern, first, last)]``, where *pattern* carries a
@@ -281,31 +372,39 @@ def render_versions(context, stream="main", config=None):
     if stream not in config.streams:
         return []
 
-    # render_dir ends in the version folder, so its parent is the folder that
-    # holds every version of this stream.
-    try:
-        folder = render_dir(context.at_version(1), stream, config).parent
-    except (ValueError, KeyError):
-        return []
-    if not folder.is_dir():
-        return []
-
     fields = context.as_fields()
     ext = config.streams[stream].get("ext", "exr")
 
+    # One application's folder when asked for; otherwise every one there is,
+    # and the folder renders went into before any of them existed.
+    wanted = [render_folder(config, dcc)] if dcc else render_folders(config)
+
     found = []
-    for entry in sorted(folder.iterdir()):
-        if not entry.is_dir():
+    seen = set()
+    for renders in wanted:
+        # render_dir ends in the version folder, so its parent is the folder
+        # that holds every version of this stream.
+        try:
+            folder = _render_dir(context.at_version(1), stream, config,
+                                 renders).parent
+        except (ValueError, KeyError):
             continue
-        version = _version_folder(entry.name, fields, config)
-        if version is None:
+        if folder in seen or not folder.is_dir():
             continue
-        frames = sorted(entry.glob("*.%s" % ext))
-        if not frames:
-            continue
-        pattern, first, last = _frame_pattern(frames)
-        if pattern:
-            found.append((version, pattern, first, last))
+        seen.add(folder)
+
+        for entry in sorted(folder.iterdir()):
+            if not entry.is_dir():
+                continue
+            version = _version_folder(entry.name, fields, config)
+            if version is None:
+                continue
+            frames = sorted(entry.glob("*.%s" % ext))
+            if not frames:
+                continue
+            pattern, first, last = _frame_pattern(frames)
+            if pattern:
+                found.append((version, pattern, first, last))
 
     return sorted(found)
 
@@ -369,7 +468,7 @@ def _frame_pattern(frames):
     return pattern, min(numbers), max(numbers)
 
 
-def render_file(context, stream="main", frame="####", config=None):
+def render_file(context, stream="main", frame="####", config=None, dcc=None):
     """The frame-numbered output path for one stream of this context."""
     config = (config or Config()).for_project(context.project)
     settings = config.streams[stream]
@@ -381,4 +480,4 @@ def render_file(context, stream="main", frame="####", config=None):
         frame=frame,
         ext=settings.get("ext", "exr"),
     )
-    return render_dir(context, stream, config) / name
+    return render_dir(context, stream, config, dcc) / name

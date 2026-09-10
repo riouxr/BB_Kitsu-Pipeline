@@ -21,7 +21,7 @@ import tempfile
 
 import bpy
 
-from .BB_core.versioning import tag_comment
+from .BB_core.versioning import format_master_tag, tag_comment
 
 from . import prefs, session
 
@@ -305,7 +305,7 @@ def prepare(context, last_render):
     return movie, True, ''
 
 
-def submit(context, comment='', task_status_id=None):
+def submit(context, comment='', task_status_id=None, master=False):
     '''Send the last render to Kitsu. Returns a note for the operator.'''
     state = session.state
     last_render = state.last_render
@@ -337,11 +337,32 @@ def submit(context, comment='', task_status_id=None):
         comment or ('%s rendered from Blender' % last_render.get('stem')),
         entity_context.version)
 
+    if master:
+        text = '%s %s' % (text, format_master_tag(entity_context.version))
+
     # What actually went up, not what was rendered: asking for one image out
     # of a sequence publishes a look, and a look should not burn a version.
     was_sequence = os.path.splitext(str(path))[1].lower() in MOVIES
 
+    # Read here, on the main thread: the copy below runs on the upload's.
+    config = prefs.config(context)
+    stream = last_render.get('stream') or 'main'
+    flagged = {}
+
     def work():
+        if master:
+            # The whole rendered version, not the movie made from it - Master
+            # is what a comp reads, and a comp reads frames. On disk before
+            # the upload, and not undone if the upload fails: the copy is
+            # already the useful half.
+            from .BB_core import master as master_mod
+            try:
+                folder, skipped = master_mod.set_master(
+                    entity_context, stream, config, 'blender')
+                flagged['folder'] = str(folder)
+                flagged['skipped'] = skipped
+            except Exception as error:
+                flagged['error'] = str(error)
         preferences = prefs.get(context)
         return client.publish_preview(
             task_id, path, comment=text, task_status_id=task_status_id,
@@ -357,7 +378,12 @@ def submit(context, comment='', task_status_id=None):
         if error:
             state.say('Kitsu upload failed: %s' % error, error=True)
             return
-        state.say('submitted %s to Kitsu' % os.path.basename(path))
+        said = 'submitted %s to Kitsu' % os.path.basename(path)
+        if flagged.get('error'):
+            said += ' - but it could not be made master (%s)' % flagged['error']
+        elif flagged.get('folder'):
+            said += ' and made master'
+        state.say(said, error=bool(flagged.get('error')))
         _version_up_after_publish(context, sequence=was_sequence)
 
     session.run('submitting to Kitsu', work, done, background=True)

@@ -35,7 +35,8 @@ def default_comment(path):
     return '%s saved from Maya' % os.path.basename(path)
 
 
-def send(entity_context, path, comment='', task_status_id=None, preview=None):
+def send(entity_context, path, comment='', task_status_id=None, preview=None,
+         master=False):
     '''Post a comment, a status and optionally a picture.
 
     Returns a short note. Never raises: the scene is already on disk, and
@@ -47,6 +48,11 @@ def send(entity_context, path, comment='', task_status_id=None, preview=None):
 
     client = state.client
     text = tag_comment(comment or default_comment(path), entity_context.version)
+    if master:
+        # The durable record of which version is master, read back for the
+        # "Master (v009)" label the browsers show.
+        from BB_core.versioning import format_master_tag
+        text = '%s %s' % (text, format_master_tag(entity_context.version))
 
     try:
         if preview:

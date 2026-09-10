@@ -75,7 +75,7 @@ def render_target(task, version):
     '''
     context = build_context(task, version)
     config = state.config()
-    folder = workfiles.render_dir(context, STREAM, config)
+    folder = workfiles.render_dir(context, STREAM, config, 'resolve')
     stem = workfiles.render_stem(context, config)
     return str(folder), stem
 
@@ -157,7 +157,9 @@ def render_folder_for(project, sequence, shot, task, version):
     '''The folder holding one rendered version of a task, for importing.'''
     context = build_context(task, version, project, sequence, shot)
     config = settings.config(project)
-    return str(workfiles.render_dir(context, RENDER_STREAM, config))
+    # Whichever application rendered it - Blender's lighting in 3DRenders, a
+    # comp in 2DRenders, or a render from before either existed.
+    return str(workfiles.find_render_dir(context, RENDER_STREAM, config))
 
 
 def upload(task, status, comment, file_path, log=print):

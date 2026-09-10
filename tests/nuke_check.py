@@ -491,6 +491,8 @@ def main():
           "create_version writes a script (%s)" % os.path.basename(created or ""))
     check(os.path.basename(created) == "sh01_v001.nk",
           "starting at v001")
+    check(Path(created).parent.name == "2DScene",
+          "in the task's 2DScene folder (%s)" % Path(created).parent)
     check(nuke.root().knob("first_frame").value() == 1001
           and nuke.root().knob("last_frame").value() == 1252,
           "the Kitsu frame range is applied (%s-%s)"
@@ -532,6 +534,44 @@ def main():
     check("v002" not in after, "and off the version before it")
     check(os.path.basename(bumped_again).endswith("v003.nk"),
           "the script itself is v003 too (%s)" % os.path.basename(bumped_again))
+    check("2DRenders" in Path(after).parts,
+          "and a Nuke Write renders into 2DRenders (%s)" % Path(after).parent)
+
+    # -- Save Next Version asks first, and Cancel means nothing happened ----
+    # The menu entry is what an artist presses. It asks before writing, so
+    # a Cancel leaves no new version and no master behind.
+    import BB_pipeline_nuke as nuke_package
+    from BB_pipeline_nuke import browser as nuke_browser
+
+    script_dir = Path(bumped_again).parent
+    master_script = script_dir / "sh01_master.nk"
+    real_ask = nuke_browser.ask_save_choices
+    asked = []
+    try:
+        nuke_browser.ask_save_choices = (
+            lambda entity_context, path, **kwargs: asked.append(
+                (os.path.basename(str(path)), kwargs.get("ok_text"))) or None)
+        before = sorted(p.name for p in script_dir.iterdir())
+        nuke_package.save_next_version()
+        check(asked and asked[0] == ("sh01_v004.nk", "Save v004"),
+              "Save Next Version asks first, naming the version (%s)" % asked)
+        check(sorted(p.name for p in script_dir.iterdir()) == before,
+              "and Cancel writes nothing - no script, no master")
+
+        nuke_browser.ask_save_choices = (
+            lambda entity_context, path, **kwargs: {
+                "publish": False, "comment": "", "status": None,
+                "snapshot": False, "master": True})
+        nuke_package.save_next_version()
+        check((script_dir / "sh01_v004.nk").is_file(),
+              "OK saves the version it named")
+        check(master_script.is_file(),
+              "and Save as Master copies it beside the versions (%s)"
+              % master_script.name)
+        check(len(fetch.list_versions(context)) == 4,
+              "the master is not listed as a version")
+    finally:
+        nuke_browser.ask_save_choices = real_ask
 
     # -- the pipeline's own edits are not the artist's ------------------------
     # Stamping, repointing Writes and applying the frame range all set

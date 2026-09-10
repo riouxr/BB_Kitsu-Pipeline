@@ -232,7 +232,7 @@ def prepare(path):
     return made, True, problem
 
 
-def submit(node, comment='', task_status_id=None):
+def submit(node, comment='', task_status_id=None, master=False):
     '''Publish what a Write rendered. Returns a note for the caller.'''
     entity_context, _source = stamp.read_current()
 
@@ -254,11 +254,25 @@ def submit(node, comment='', task_status_id=None):
     if problem:
         return problem
 
+    flagged = ''
+    if master:
+        # The frames the Write rendered, not the movie made from them -
+        # Master is what the next comp reads, and a comp reads frames.
+        from BB_core import master as master_mod
+        try:
+            master_mod.set_master(entity_context, writenode.stream_of(node),
+                                  session.config_for(entity_context), 'nuke')
+            flagged = ' and made master'
+        except Exception as error:
+            flagged = ' - but it could not be made master (%s)' % error
+
     try:
         note = publish.send(entity_context, path, comment=comment,
-                            task_status_id=task_status_id, preview=preview)
+                            task_status_id=task_status_id, preview=preview,
+                            master=master)
     finally:
         _discard(preview)
+    note += flagged
 
     return note + _version_up_after_publish(sequence)
 

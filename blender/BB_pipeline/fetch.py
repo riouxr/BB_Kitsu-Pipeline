@@ -416,6 +416,11 @@ def refresh_workfiles(context=None):
         return
 
     state.workfiles = found
+    try:
+        from .BB_core import master as master_mod
+        state.master_file = master_mod.master_scene(entity_context, DCC, config)
+    except Exception:
+        state.master_file = None
     if not found:
         properties.clear(props, 'version')
         state.say('no scene file yet for this task')

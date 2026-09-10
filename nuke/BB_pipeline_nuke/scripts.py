@@ -263,28 +263,55 @@ def read_sequence(pattern, first, last):
     return read
 
 
+def upcoming_version():
+    '''``(path, version)`` the next Save Next Version would write, or raises.
+
+    From the task, not from the open script's folder: a script opened from
+    the old task-folder layout versions up into 2DScene, and a master -
+    whose name carries no version - versions up from its stamp.
+    '''
+    if not current_path():
+        raise ScriptError('Save this script once before versioning it')
+
+    entity_context, _stamped_from = stamp.read_current()
+    if entity_context is None:
+        raise ScriptError('No Kitsu context on this script')
+
+    try:
+        config = session.config_for(entity_context)
+    except Exception:
+        config = None
+    try:
+        return workfiles.next_workfile(entity_context, session.DCC, config)
+    except Exception as error:
+        raise ScriptError(str(error))
+
+
+def make_master(entity_context, path=None):
+    '''Copy a saved version over the task's master script. Returns a note.'''
+    from BB_core import master
+
+    if entity_context is None:
+        return 'no Kitsu context, so no master'
+    try:
+        made = master.set_master_scene(entity_context, session.DCC,
+                                       session.config_for(entity_context),
+                                       source=path)
+    except Exception as error:
+        return 'could not make master (%s)' % error
+    return 'master is now %s (%s)' % (entity_context.versioned(), made.name)
+
+
 def save_next_version():
     '''Save the open script as the next version of itself. Returns its path.'''
     nuke = _nuke()
 
-    open_path = current_path()
-    if not open_path:
-        raise ScriptError('Save this script once before versioning it')
-
+    path, version = upcoming_version()
     entity_context, _stamped_from = stamp.read_current()
     try:
         config = session.config_for(entity_context)
     except Exception:
         config = None
-
-    try:
-        path, version = versioning.bump(open_path, config)
-    except ValueError:
-        raise ScriptError('This script is not named to the pipeline scheme - '
-                          'use the Kitsu browser to start one that is')
-
-    if entity_context is None:
-        raise ScriptError('No Kitsu context on this script')
 
     stamped = entity_context.at_version(version)
     stamp.write(stamped)

@@ -53,6 +53,10 @@ class Session:
         self.task_departments = None
 
         self.workfiles = []    # [(version, Path)] for the current context
+        # The task's master scene, when it has one. Kept apart from the
+        # versions: it is not one, and "the next version" is worked out from
+        # those alone.
+        self.master_file = None
         self.context = None    # the last opened or created EntityContext
 
         # What the last render produced, for the review panel to submit, and

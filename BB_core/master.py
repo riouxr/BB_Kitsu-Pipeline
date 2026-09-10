@@ -18,17 +18,46 @@ for the "Master (v005)" label in Nuke/Resolve's browsers and for anyone
 reading a task's history later.
 """
 import shutil
+from pathlib import Path
 
 from . import naming, versioning, workfiles
 from .config import Config
 
 MASTER_NAME = "Master"
+MASTER_WORD = "master"
 
 
-def master_dir(context, stream="main", config=None):
-    """Where the copy for one stream lives."""
-    version_dir = workfiles.render_dir(context, stream, config)
-    return version_dir.parent / MASTER_NAME
+def master_dir(context, stream="main", config=None, dcc=None):
+    """Where the copy for one stream lives.
+
+    Beside the version folders it was copied from, so inside the rendering
+    application's own render folder. With no application named - a reader
+    that does not know which one rendered - the first of the candidates that
+    exists, and the pre-folder location when none does.
+    """
+    if dcc:
+        return workfiles.render_dir(context, stream, config, dcc).parent / MASTER_NAME
+    candidates = master_dirs(context, stream, config)
+    for folder in candidates:
+        if folder.is_dir():
+            return folder
+    return candidates[-1]
+
+
+def master_dirs(context, stream="main", config=None):
+    """Every place a master for this stream could be, newest layout first."""
+    config = (config or Config()).for_project(context.project)
+    found = []
+    for renders in workfiles.render_folders(config):
+        folder = workfiles._render_dir(context, stream, config, renders).parent / MASTER_NAME
+        if folder not in found:
+            found.append(folder)
+    return found
+
+
+def _rendered_dir(context, stream, config):
+    """The version folder that actually holds this version's frames."""
+    return workfiles.find_render_dir(context, stream, config)
 
 
 def _master_stem(context, config):
@@ -44,7 +73,7 @@ def _master_stem(context, config):
     return stem.replace(version_token, "master", 1)
 
 
-def set_master(context, stream="main", config=None):
+def set_master(context, stream="main", config=None, dcc=None):
     """Copy this stream's version into Master, replacing whatever was there.
 
     Returns ``(folder, skipped_names)``.
@@ -73,11 +102,13 @@ def set_master(context, stream="main", config=None):
     flag - one stale frame until whatever is locking it lets go beats
     nothing updating at all.
     """
-    target = workfiles.render_dir(context, stream, config)
+    target = (workfiles.render_dir(context, stream, config, dcc) if dcc
+              else _rendered_dir(context, stream, config))
     if not target.is_dir():
         raise ValueError("no render at %s" % target)
 
-    link = master_dir(context, stream, config)
+    # Beside the version folder it came from, whichever render folder that is.
+    link = target.parent / MASTER_NAME
     link.mkdir(parents=True, exist_ok=True)
 
     stem = _master_stem(context, config)
@@ -106,7 +137,7 @@ def set_master(context, stream="main", config=None):
     return link, skipped
 
 
-def master_frames(context, stream="main", config=None):
+def master_frames(context, stream="main", config=None, dcc=None):
     """``(pattern, first, last)`` for what is in Master right now, or None.
 
     ``_master_stem`` comes out the same regardless of which version number
@@ -119,18 +150,99 @@ def master_frames(context, stream="main", config=None):
     if stream not in config.streams:
         return None
 
-    folder = master_dir(context, stream, config)
-    if not folder.is_dir():
-        return None
-
     ext = config.streams[stream].get("ext", "exr")
     stem = _master_stem(context.at_version(context.version or 1), config)
-    frames = sorted(folder.glob("%s.*.%s" % (stem, ext)))
-    if not frames:
-        return None
 
-    pattern, first, last = workfiles._frame_pattern(frames)
-    return (pattern, first, last) if pattern else None
+    folders = ([master_dir(context, stream, config, dcc)] if dcc
+               else master_dirs(context, stream, config))
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        frames = sorted(folder.glob("%s.*.%s" % (stem, ext)))
+        if not frames:
+            continue
+        pattern, first, last = workfiles._frame_pattern(frames)
+        if pattern:
+            return pattern, first, last
+    return None
+
+
+# -- scene files ----------------------------------------------------------------
+#
+# The same idea for the scene a version was saved as: one file whose name never
+# changes, holding whichever version was last flagged. It is what another task
+# links - a lighting scene linking the model's master picks up the next approved
+# model by reopening, not by being re-pointed at v009.
+
+def _masterise(name, context, config):
+    """*name* with its version token swapped for the word master.
+
+    The last occurrence, not the first: an entity called "v2-rig" must keep
+    its own name.
+    """
+    token = "v" + naming.format_version(context.version or 1, config)
+    head, found, tail = name.rpartition(token)
+    return head + MASTER_WORD + tail if found else name
+
+
+def master_scene_file(context, dcc, config=None):
+    """Where a task's master scene file lives: beside its versions.
+
+    ``knife_v008.blend`` is flagged as ``knife_master.blend`` in the same
+    folder. The same folder on purpose - a copy anywhere else would carry
+    relative paths to textures and linked libraries that no longer resolve
+    from where it sits.
+    """
+    config = (config or Config()).for_project(context.project)
+    context = context.at_version(context.version or 1)
+    version_file = workfiles.work_file(context, dcc, context.version, config)
+    return version_file.with_name(_masterise(version_file.name, context, config))
+
+
+def master_thumb_file(context, dcc, config=None):
+    """The picture the browser shows for the master scene."""
+    config = (config or Config()).for_project(context.project)
+    context = context.at_version(context.version or 1)
+    folder = workfiles.scene_dir(context, dcc, config) / workfiles.THUMB_DIR
+    return folder / ("%s.png" % _masterise(context.versioned(config=config),
+                                           context, config))
+
+
+def set_master_scene(context, dcc, config=None, source=None):
+    """Copy a saved version over the task's master scene. Returns its path.
+
+    ``source`` defaults to the version file ``context`` names. Copied in
+    place rather than deleted and replaced, for the reason set_master gives:
+    Windows lets a file somebody has open be overwritten, not removed, and a
+    master is exactly the file other scenes have open.
+    """
+    config = (config or Config()).for_project(context.project)
+    source = Path(source) if source else workfiles.work_file(
+        context, dcc, context.version, config)
+    if not source.is_file():
+        raise ValueError("no scene file at %s" % source)
+
+    target = master_scene_file(context, dcc, config)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(str(source), str(target))
+
+    # The version's picture as well, so the master is recognisable in the
+    # browser; a missing one is not worth failing the flag over.
+    picture = workfiles.thumb_file(context, dcc, context.version, config)
+    if picture.is_file():
+        try:
+            thumb = master_thumb_file(context, dcc, config)
+            thumb.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(picture), str(thumb))
+        except OSError:
+            pass
+    return target
+
+
+def master_scene(context, dcc, config=None):
+    """The master scene file if one exists, else None."""
+    found = master_scene_file(context, dcc, config)
+    return found if found.is_file() else None
 
 
 def current_master(client, task_id):

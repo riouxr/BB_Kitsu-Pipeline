@@ -239,7 +239,7 @@ def output_path(entity_context):
 
     try:
         config = session.config_for(entity_context)
-        folder = workfiles.render_dir(entity_context, 'main', config)
+        folder = workfiles.render_dir(entity_context, 'main', config, 'maya')
         stem = workfiles.render_stem(entity_context, config)
     except Exception:
         return None

@@ -150,9 +150,10 @@ def main():
         result = bpy.ops.bb.new_workfile()
         check(result == {"FINISHED"}, "new_workfile succeeded (%s)" % result)
 
-        expected = (work_root / "FF9" / "0070" / "precomp3d"
+        expected = (work_root / "FF9" / "0070" / "precomp3d" / "3DScenes"
                     / "0070_v001.blend")
-        check(expected.is_file(), "v001 written to the templated path")
+        check(expected.is_file(),
+              "v001 written into the task's 3DScenes folder (%s)" % expected)
         check(Path(bpy.data.filepath) == expected, "the new file is the one now open")
 
         stamped, source = stamp.read_current()
@@ -173,6 +174,68 @@ def main():
         v002 = expected.parent / "0070_v002.blend"
         check(v002.is_file(), "v002 written next to v001")
         check(Path(bpy.data.filepath) == v002, "v002 is now the open file")
+
+        # Every save offers Save as Master, on by default - so v002 is now
+        # the task's master too, beside the versions it came from.
+        master_file = expected.parent / "0070_master.blend"
+        check(master_file.is_file(),
+              "saving the next version made it the master (%s)" % master_file.name)
+        check(master_file.stat().st_size == v002.stat().st_size,
+              "and the master is a copy of that version")
+
+        # Cancel has to mean nothing happened. The dialog is asked before
+        # anything is written, so opening it - the way the menu does - and
+        # never pressing OK must leave the folder exactly as it was: no new
+        # version claimed, nothing saved, the master untouched.
+        #
+        # Not through bpy.ops: in a background Blender a props dialog is
+        # accepted the moment it opens, which is exactly the OK this has to
+        # prove is still to come. The operator's invoke runs against a window
+        # manager that shows the dialog and then does what Cancel does -
+        # nothing.
+        import types as _types
+        from BB_pipeline import operators as bb_operators
+
+        class _CancellingWM:
+            def __init__(self, real):
+                self._real, self.asked = real, []
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def invoke_props_dialog(self, operator, **options):
+                self.asked.append(options)
+                return {"RUNNING_MODAL"}
+
+        class _Context:
+            def __init__(self, real):
+                self._real = real
+                self.window_manager = _CancellingWM(real.window_manager)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        saver = bb_operators.BB_OT_save_next_version
+        fake = _types.SimpleNamespace(announce=True, publish_to_kitsu=True,
+                                      as_master=True, confirmed=False,
+                                      next_name="", report=lambda *a: None)
+        fake._next = saver._next.__get__(fake)
+        fake.execute = saver.execute.__get__(fake)
+
+        before = sorted(p.name for p in expected.parent.iterdir())
+        before_master = master_file.stat().st_mtime
+        cancelling = _Context(bpy.context)
+        outcome = saver.invoke(fake, cancelling, None)
+        after = sorted(p.name for p in expected.parent.iterdir())
+        check(outcome == {"RUNNING_MODAL"} and cancelling.window_manager.asked,
+              "Save Next Version asks first (%s)" % sorted(outcome))
+        check(cancelling.window_manager.asked
+              and cancelling.window_manager.asked[0].get("confirm_text") == "Save v003",
+              "with a button that says which version it will save (%s)"
+              % (cancelling.window_manager.asked[:1]))
+        check(after == before and master_file.stat().st_mtime == before_master,
+              "and cancelling it writes nothing - no version, no master")
+        check(Path(bpy.data.filepath) == v002, "and v002 is still the open file")
         check(stamp.read_current()[0].version == 2, "the stamp followed the version")
         check(stamp.read_current()[0].task_id == "t1", "the ids survived the increment")
 
@@ -191,11 +254,37 @@ def main():
               "versions list newest first")
         check(props.version == "2", "the selector follows the file just saved")
 
+        # -- the master has a row of its own, above the versions ---------------
+        check(session.state.master_file is not None
+              and session.state.master_file.name == "0070_master.blend",
+              "the browser knows the task's master (%s)"
+              % getattr(session.state.master_file, "name", None))
+        listed = [item[0] for item in properties.version_items(None, bpy.context)]
+        check(listed[:1] == [properties.MASTER],
+              "and lists it first, above the versions (%s)" % listed)
+        check(props.version == "2",
+              "while the newest version stays the one selected on arrival")
+        props.version = properties.MASTER
+        picked = properties.selected_version()
+        check(picked is not None and picked[1] == session.state.master_file,
+              "picking it gives Open, Append and Link the master file")
+        props.version = "2"
+
         # -- a foreign file must not move the version on ------------------------
         (expected.parent / "old_backup.blend").write_bytes(b"")
         (expected.parent / "VIL_FF9_0070_lighting_v009.blend").write_bytes(b"")
         fetch.refresh_workfiles()
-        check(len(session.state.workfiles) == 2, "files from other tasks are ignored")
+        check(len(session.state.workfiles) == 2,
+              "files from other tasks are ignored, and so is the master")
+
+        # A cut made by a publish is silent: no dialog, and no master - the
+        # publish that cut it had a master choice of its own.
+        before_master = master_file.stat().st_mtime
+        bpy.ops.bb.save_next_version(announce=False)
+        check(master_file.stat().st_mtime == before_master,
+              "a silent version cut leaves the master alone")
+        for extra in sorted(expected.parent.glob("0070_v00[3-9].blend")):
+            extra.unlink()
 
         result = bpy.ops.bb.new_workfile()
         check(result == {"FINISHED"}, "third new_workfile succeeded")

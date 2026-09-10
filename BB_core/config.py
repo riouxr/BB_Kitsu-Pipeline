@@ -112,6 +112,10 @@ class Config:
         """Per-DCC settings, e.g. the work file extension."""
         return self._data.get("dcc", {}).get(name, {})
 
+    def dccs(self):
+        """Every configured DCC's settings, by name."""
+        return dict(self._data.get("dcc", {}))
+
     def with_roots(self, work_root=None, render_root=None):
         """A copy carrying the roots the host application knows about."""
         runtime = {}

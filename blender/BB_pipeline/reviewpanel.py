@@ -74,6 +74,7 @@ class BB_PT_review(Panel):
             row.prop(props, 'review_as', expand=True)
 
         column.prop(props, 'task_status')
+        column.prop(props, 'as_master')
 
         row = layout.row()
         row.enabled = not state.busy

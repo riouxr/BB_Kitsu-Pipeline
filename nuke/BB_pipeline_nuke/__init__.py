@@ -84,10 +84,28 @@ def open_settings():
 
 
 def save_next_version():
-    '''Version up the open script, then offer to tell Kitsu.'''
+    '''Ask first, then version up the open script and do what was ticked.
+
+    Asked before anything is written: the version is only claimed, the
+    script only saved and the master only replaced once OK is pressed, so
+    Cancel leaves the disk exactly as it was.
+    '''
     import nuke
 
-    from . import browser, scripts
+    from . import browser, scripts, stamp
+
+    try:
+        upcoming, version = scripts.upcoming_version()
+    except scripts.ScriptError as error:
+        nuke.message(str(error))
+        return ''
+
+    entity_context = stamp.read_current()[0]
+    choices = browser.ask_save_choices(
+        entity_context.at_version(version), upcoming,
+        title='Save Next Version', ok_text='Save v%03d' % version)
+    if choices is None:
+        return ''
 
     try:
         path = scripts.save_next_version()
@@ -96,7 +114,7 @@ def save_next_version():
         return ''
 
     nuke.tprint('[Kitsu] saved %s' % path)
-    browser.ask_to_publish(path)
+    browser.carry_out(choices, stamp.read_current()[0], path)
     return path
 
 

@@ -191,12 +191,18 @@ def _from_session(remembered, name):
     from . import session
 
     try:
-        folder = workfiles.work_dir(remembered, session.config_for(remembered))
+        config = session.config_for(remembered)
+        # The scene's own folder, and the task folder scenes sat in before
+        # each application had one.
+        folders = {os.path.normpath(str(workfiles.scene_dir(
+                       remembered, session.DCC, config))).lower(),
+                   os.path.normpath(str(workfiles.work_dir(
+                       remembered, config))).lower()}
     except Exception:
         return None
 
     here = os.path.normpath(os.path.dirname(str(name))).lower()
-    if here != os.path.normpath(str(folder)).lower():
+    if here not in folders:
         return None
 
     try:

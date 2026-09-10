@@ -179,9 +179,11 @@ def list_versions(context, config, dcc):
     """
     if dcc == "resolve":
         return resolve_launch.resolve_versions(context)
-    work_dir = workfiles.work_dir(context, config)
-    ext = config.dcc(dcc).get("ext", "")
-    found = versioning.existing_versions(work_dir, context.as_fields(), ext, config)
+    # The same listing every browser uses - the application's own scene
+    # folder, and the task folder files sat in before it existed. Reading
+    # the task folder alone found nothing once scenes moved into 3DScenes,
+    # and Launch then offered to create a v001 over a task with eight.
+    found = workfiles.list_workfiles(context, dcc, config)
     return sorted(found, reverse=True)
 
 
