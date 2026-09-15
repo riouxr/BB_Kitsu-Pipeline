@@ -1256,6 +1256,30 @@ class TestApplicationFolders(unittest.TestCase):
         self.assertIsNotNone(found)
         self.assertEqual(found[1:], (1, 2))
 
+    def test_a_browser_sees_playblasts_beside_renders(self):
+        """What Resolve's browser lists: every stream, not only main."""
+        from BB_core import master
+
+        for stream, version, ext in (("main", 3, "exr"), ("playblast", 3, "png"),
+                                     ("playblast", 4, "png")):
+            context = self.shot.at_version(version)
+            folder = workfiles.render_dir(context, stream, self.config, "blender")
+            folder.mkdir(parents=True, exist_ok=True)
+            stem = workfiles.render_stem(context, self.config)
+            (folder / ("%s.1001.%s" % (stem, ext))).write_bytes(b"x")
+
+        rows = workfiles.every_render_version(self.shot, self.config)
+        self.assertEqual([(v, s) for v, s, *_rest in rows],
+                         [(3, "main"), (3, "playblast"), (4, "playblast")])
+        folders = {Path(pattern).parent for _v, _s, pattern, _f, _l in rows}
+        self.assertEqual(len(folders), 3, "each row keeps the folder it came from")
+
+        master.set_master(self.shot.at_version(4), "playblast", self.config)
+        masters = master.every_master(self.shot, self.config)
+        self.assertEqual([stream for stream, *_rest in masters], ["playblast"])
+        self.assertEqual(Path(masters[0][1]).parent.parts[-2:],
+                         ("playblast", "Master"))
+
 
 class TestSavedKeysAreKept(unittest.TestCase):
     """A key a host writes to the settings file has to be one the file keeps.

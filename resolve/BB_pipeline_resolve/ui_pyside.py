@@ -145,7 +145,8 @@ class KitsuPublisher:
             'selected_task': None,
             'version_mode': None,           # 'project' | 'render'
             'selected_version': None,
-            'render_versions': [],
+            'render_rows': {},              # (version text, detail) -> folder
+            'selected_render': None,        # the folder Import brings in
             'current_task_id': None,
             'version': 1,
             'project_name': None,
@@ -766,7 +767,8 @@ class KitsuPublisher:
             btn.setEnabled(False)
         self.ui_state['version_mode'] = None
         self.ui_state['selected_version'] = None
-        self.ui_state['render_versions'] = []
+        self.ui_state['render_rows'] = {}
+        self.ui_state['selected_render'] = None
 
     def _on_master_only_changed(self, _state=0):
         settings.set('master_only', self.master_only_chk.isChecked())
@@ -812,23 +814,19 @@ class KitsuPublisher:
         elif self.master_only_chk.isChecked():
             self.ui_state['version_mode'] = 'render'
             try:
-                frames = publish.master_frames_for(proj, seq, shot, task)
+                masters = publish.masters_for(proj, seq, shot, task)
             except Exception as e:
                 self.browse_status_lbl.setText('Could not check Master: %s' % e)
                 return
 
-            renders = [(0, frames[0], frames[1], frames[2])] if frames else []
-            self.ui_state['render_versions'] = renders
-            if frames:
+            if masters:
                 master_version = None
                 if state.client and task:
                     from BB_core import master
                     master_version = master.current_master(state.client, task['id'])
                 name = 'Master (v%03d)' % master_version if master_version else 'Master'
-                item = QtWidgets.QTreeWidgetItem(
-                    [name, '%d frame(s)' % (frames[2] - frames[1] + 1)])
-                item.setIcon(0, icon)
-                self.version_tree.addTopLevelItem(item)
+                for stream, pattern, first, last in masters:
+                    self._add_render_row(name, stream, pattern, first, last, icon)
                 self.browse_status_lbl.setText('Master — click to Import')
             else:
                 self.browse_status_lbl.setText('no master flagged yet for this task')
@@ -841,12 +839,9 @@ class KitsuPublisher:
                 self.browse_status_lbl.setText('Could not check for renders: %s' % e)
                 return
 
-            self.ui_state['render_versions'] = renders
-            for version, _pattern, first, last in reversed(renders):
-                item = QtWidgets.QTreeWidgetItem(
-                    ['v%03d' % version, '%d frame(s)' % (last - first + 1)])
-                item.setIcon(0, icon)
-                self.version_tree.addTopLevelItem(item)
+            # Newest first; a render and a playblast of one version side by side.
+            for version, stream, pattern, first, last in reversed(renders):
+                self._add_render_row('v%03d' % version, stream, pattern, first, last, icon)
 
             if renders:
                 self.browse_status_lbl.setText(
@@ -860,21 +855,27 @@ class KitsuPublisher:
                 self.browse_status_lbl.setText(
                     'No rendered sequence found. Looked in:\n' + looked_in)
 
+    def _add_render_row(self, label, stream, pattern, first, last, icon):
+        detail = publish.describe(stream, first, last)
+        item = QtWidgets.QTreeWidgetItem([label, detail])
+        item.setIcon(0, icon)
+        self.version_tree.addTopLevelItem(item)
+        self.ui_state['render_rows'][(label, detail)] = publish.folder_of(pattern)
+
     def _on_version_clicked(self, item, _column):
-        text = item.text(0)
-        if text.startswith('Master'):
-            # A sentinel, not a number - Master has no version of its own to
-            # reconstruct a path from, only its own already-known folder.
-            self.ui_state['selected_version'] = 'master'
-        else:
-            try:
-                self.ui_state['selected_version'] = int(text.lstrip('vV'))
-            except (ValueError, AttributeError):
-                return
+        if self.ui_state['version_mode'] == 'render':
+            # By the folder the row was listed from, not a version number:
+            # v005 can be a render and a playblast, in different folders.
+            folder = self.ui_state['render_rows'].get((item.text(0), item.text(1)))
+            self.ui_state['selected_render'] = folder
+            self.import_btn.setEnabled(bool(folder))
+            return
+        try:
+            self.ui_state['selected_version'] = int(item.text(0).lstrip('vV'))
+        except (ValueError, AttributeError):
+            return
         if self.ui_state['version_mode'] == 'project':
             self.open_btn.setEnabled(True)
-        elif self.ui_state['version_mode'] == 'render':
-            self.import_btn.setEnabled(True)
 
     # ── Browse actions ────────────────────────────────────────────────────
 
@@ -941,19 +942,13 @@ class KitsuPublisher:
                     self.ui_state['selected_task'], name)
 
     def on_import(self):
-        proj = self._current_project_dict()
-        seq = self.ui_state['selected_sequence']
-        shot = self.ui_state['selected_shot']
-        task = self.ui_state['selected_task']
-        version = self.ui_state['selected_version']
-        if not (proj and seq and shot and task and version):
+        folder = self.ui_state['selected_render']
+        if not folder:
             return
 
         self.import_btn.setEnabled(False)
         self.import_btn.setText('Importing...')
         try:
-            folder = (publish.master_dir_for(proj, seq, shot, task) if version == 'master'
-                     else publish.render_folder_for(proj, seq, shot, task, version))
             self.log('[import] %s' % folder)
             resolve_ops.import_sequence_folder(folder, log=self.log)
             self.log('[import] done ✓')

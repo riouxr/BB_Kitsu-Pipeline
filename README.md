@@ -1013,7 +1013,10 @@ what already exists for that exact shot + task pair, and offers:
 - **Import in Media Storage** — for a "(renders)" task: brings the selected
   rendered version's frames into the Media Pool via Resolve's Media Storage,
   which groups a numbered sequence into one clip the way picking it by hand
-  in the Media page would.
+  in the Media page would. Renders and playblasts are listed together, newest
+  first, the playblasts marked as such — `v013  playblast — 516 frame(s)` —
+  and with **Master only** ticked, each stream's master, the same as Nuke's
+  browser.
 
 Confirming Open/New Version/New From Current switches straight to Publish —
 there is something open and assigned with nothing further to click. A Color

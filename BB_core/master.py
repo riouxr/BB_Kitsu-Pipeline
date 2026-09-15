@@ -167,6 +167,21 @@ def master_frames(context, stream="main", config=None, dcc=None):
     return None
 
 
+def every_master(context, config=None):
+    """``[(stream, pattern, first, last)]`` for each stream with a master.
+
+    A playblast flagged master is in the playblast stream's own Master
+    folder, so looking only in ``main``'s misses it.
+    """
+    config = (config or Config()).for_project(context.project)
+    found = []
+    for stream in sorted(config.streams):
+        frames = master_frames(context, stream, config)
+        if frames is not None:
+            found.append((stream,) + tuple(frames))
+    return found
+
+
 # -- scene files ----------------------------------------------------------------
 #
 # The same idea for the scene a version was saved as: one file whose name never

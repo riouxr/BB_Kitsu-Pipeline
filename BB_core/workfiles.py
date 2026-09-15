@@ -409,6 +409,22 @@ def render_versions(context, stream="main", config=None, dcc=None):
     return sorted(found)
 
 
+def every_render_version(context, config=None):
+    """Every rendered version of every stream on disk, oldest first.
+
+    Returns ``[(version, stream, pattern, first, last)]``. For a browser
+    listing another task's frames: a playblast is a stream of its own, in a
+    folder of its own, so a reader asking only for ``main`` never sees one -
+    which is how an animator's playblasts stayed invisible to a colourist.
+    """
+    config = (config or Config()).for_project(context.project)
+    found = []
+    for stream in sorted(config.streams):
+        for version, pattern, first, last in render_versions(context, stream, config):
+            found.append((version, stream, pattern, first, last))
+    return sorted(found)
+
+
 def _version_folder(name, fields, config):
     """The version a render folder holds, or None if it holds none.
 

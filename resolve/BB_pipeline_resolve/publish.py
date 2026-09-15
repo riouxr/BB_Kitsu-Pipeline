@@ -112,7 +112,12 @@ def render(project, task, version, preset, log=print, on_progress=None):
 
 
 def render_versions_for(project, sequence, shot, task):
-    '''Every rendered version of one task's sequence, oldest first.
+    '''Every rendered version of one task, every stream, oldest first.
+
+    ``[(version, stream, pattern, first, last)]`` - the renders *and* the
+    playblasts, each stream in a folder of its own, exactly what Nuke's
+    browser lists. Asking for ``main`` alone was how an animator's
+    playblasts never showed up here at all.
 
     Read straight off the render root via :mod:`BB_core.workfiles` - not
     through Kitsu, which only ever holds the review movie - the same way
@@ -128,29 +133,32 @@ def render_versions_for(project, sequence, shot, task):
     '''
     context = build_context(task, 1, project, sequence, shot)
     config = settings.config(project)
-    return workfiles.render_versions(context, RENDER_STREAM, config)
+    return workfiles.every_render_version(context, config)
 
 
-def master_frames_for(project, sequence, shot, task):
-    '''``(pattern, first, last)`` for what is in Master right now, or None.
+def masters_for(project, sequence, shot, task):
+    '''``[(stream, pattern, first, last)]`` for each stream with a Master.'''
+    from BB_core import master as master_mod
 
-    Same shape as one row of ``render_versions_for``, so the browser can
-    treat a Master hit exactly like any other render row once it has one.
+    context = build_context(task, 1, project, sequence, shot)
+    config = settings.config(project)
+    return master_mod.every_master(context, config)
+
+
+def describe(stream, first, last):
+    '''The browser's detail column for one row: the stream, unless main.
+
+    Two rows can share a version - v005 rendered and v005 playblasted - so
+    the stream is what tells them apart, and with the version it is also
+    what the browser looks a clicked row up by.
     '''
-    from BB_core import master as master_mod
-
-    context = build_context(task, 1, project, sequence, shot)
-    config = settings.config(project)
-    return master_mod.master_frames(context, RENDER_STREAM, config)
+    frames = '%d frame(s)' % (last - first + 1)
+    return frames if stream == RENDER_STREAM else '%s  —  %s' % (stream, frames)
 
 
-def master_dir_for(project, sequence, shot, task):
-    '''The Master folder itself, for importing straight off it.'''
-    from BB_core import master as master_mod
-
-    context = build_context(task, 1, project, sequence, shot)
-    config = settings.config(project)
-    return str(master_mod.master_dir(context, RENDER_STREAM, config))
+def folder_of(pattern):
+    '''The folder a listed row's frames are in - what Import brings in.'''
+    return os.path.dirname(pattern)
 
 
 def render_folder_for(project, sequence, shot, task, version):

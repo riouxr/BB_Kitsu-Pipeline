@@ -87,7 +87,8 @@ def main():
         'br_sequences':      [],
         'br_shots':          [],
         'br_tasks':          [],
-        'br_render_versions': [],
+        'br_render_rows': {},          # (version text, detail) -> folder
+        'br_selected_render': None,    # the folder Import brings in
         'br_version_mode':    None,
         'br_selected_version': None,
         'br_pending_shot':   None,
@@ -618,7 +619,16 @@ def main():
         set_btn(itm, 'BrImportBtn', False, BTN_PURPLE)
         ui_state['br_version_mode']     = None
         ui_state['br_selected_version'] = None
-        ui_state['br_render_versions']  = []
+        ui_state['br_render_rows']      = {}
+        ui_state['br_selected_render']  = None
+
+    def _br_add_render_row(tree, label, stream, pattern, first, last):
+        detail = publish.describe(stream, first, last)
+        row = tree.NewItem()
+        row.Text[0] = label
+        row.Text[1] = detail
+        tree.AddTopLevelItem(row)
+        ui_state['br_render_rows'][(label, detail)] = publish.folder_of(pattern)
 
     def _br_refresh_versions():
         '''Fill the version list for the browsed shot + task.
@@ -670,22 +680,19 @@ def main():
         elif itm['BrMasterOnly'].Checked:
             ui_state['br_version_mode'] = 'render'
             try:
-                frames = publish.master_frames_for(proj, seq, shot, task)
+                masters = publish.masters_for(proj, seq, shot, task)
             except Exception as e:
                 itm['BrStatusLbl'].Text = 'Could not check Master: %s' % e
                 return
 
-            ui_state['br_render_versions'] = [(0, frames[0], frames[1], frames[2])] if frames else []
-            if frames:
+            if masters:
                 master_version = None
                 if state.client and task:
                     from BB_core import master
                     master_version = master.current_master(state.client, task['id'])
                 name = 'Master (v%03d)' % master_version if master_version else 'Master'
-                row = tree.NewItem()
-                row.Text[0] = name
-                row.Text[1] = '%d frame(s)' % (frames[2] - frames[1] + 1)
-                tree.AddTopLevelItem(row)
+                for stream, pattern, first, last in masters:
+                    _br_add_render_row(tree, name, stream, pattern, first, last)
                 itm['BrStatusLbl'].Text = 'Master — click to Import'
             else:
                 itm['BrStatusLbl'].Text = 'no master flagged yet for this task'
@@ -702,12 +709,9 @@ def main():
                 itm['BrStatusLbl'].Text = 'Could not check for renders: %s' % e
                 return
 
-            ui_state['br_render_versions'] = renders
-            for version, _pattern, first, last in reversed(renders):
-                row = tree.NewItem()
-                row.Text[0] = 'v%03d' % version
-                row.Text[1] = '%d frame(s)' % (last - first + 1)
-                tree.AddTopLevelItem(row)
+            # Newest first; a render and a playblast of one version side by side.
+            for version, stream, pattern, first, last in reversed(renders):
+                _br_add_render_row(tree, 'v%03d' % version, stream, pattern, first, last)
 
             if renders:
                 itm['BrStatusLbl'].Text = (
@@ -727,21 +731,20 @@ def main():
     def on_br_version_click(ev):
         item = ev.get('item') or ev.get('Item')
         if item is None: return
-        text = item.Text[0]
-        if text.startswith('Master'):
-            # A sentinel, not a number - Master has no version of its own to
-            # reconstruct a path from, only its own already-known folder.
-            version = 'master'
-        else:
-            try:
-                version = int(text.lstrip('vV'))
-            except (ValueError, AttributeError):
-                return
+        if ui_state['br_version_mode'] == 'render':
+            # By the folder the row was listed from, not a version number:
+            # v005 can be a render and a playblast, in different folders.
+            folder = ui_state['br_render_rows'].get((item.Text[0], item.Text[1]))
+            ui_state['br_selected_render'] = folder
+            set_btn(itm, 'BrImportBtn', bool(folder), BTN_PURPLE)
+            return
+        try:
+            version = int(item.Text[0].lstrip('vV'))
+        except (ValueError, AttributeError):
+            return
         ui_state['br_selected_version'] = version
         if ui_state['br_version_mode'] == 'project':
             set_btn(itm, 'BrOpenBtn', True, BTN_BLUE)
-        elif ui_state['br_version_mode'] == 'render':
-            set_btn(itm, 'BrImportBtn', True, BTN_PURPLE)
 
     def _br_finish(proj, seq, shot, task, name):
         state.project, state.sequence, state.shot = proj, seq, shot
@@ -811,21 +814,13 @@ def main():
         task (Lighting, a Compositing pass) has no Resolve project to open
         at all, only frames on the render root.
         '''
-        shot = ui_state['br_pending_shot']
-        task = _br_current_task()
-        idx_p = itm['BrProj'].CurrentIndex - 1
-        idx_s = itm['BrSeq'].CurrentIndex - 1
-        version = ui_state['br_selected_version']
-        if not shot or not task or idx_p < 0 or idx_s < 0 or not version:
+        folder = ui_state['br_selected_render']
+        if not folder:
             return
-        proj = state.projects[idx_p]
-        seq  = ui_state['br_sequences'][idx_s]
 
         set_btn(itm, 'BrImportBtn', False, BTN_PURPLE)
         itm['BrImportBtn'].Text = 'Importing...'
         try:
-            folder = (publish.master_dir_for(proj, seq, shot, task) if version == 'master'
-                     else publish.render_folder_for(proj, seq, shot, task, version))
             log('[import] %s' % folder)
             resolve_ops.import_sequence_folder(folder, log=log)
             log('[import] done ✓')
