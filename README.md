@@ -31,6 +31,9 @@ maya/userSetup.py              installs the Kitsu menu at Maya startup
 maya/install.py                writes the Maya module file
 nuke/BB_pipeline_nuke/       the Nuke integration
 nuke/install.py                adds the Kitsu menu to ~/.nuke/menu.py
+jos/BB_pipeline_jos/         the JOS Compositor integration
+jos/menu.py                    makes jos/ a JOS plugin
+jos/install.py                 writes a loader into JOS's plugin folder
 resolve/BB_pipeline_resolve/ the DaVinci Resolve integration
   ui_pyside.py                real PySide UI (UI-B) - run standalone
   ui_a.py                     Fusion UIManager UI (UI-A) - fallback only
@@ -91,6 +94,7 @@ each DCC needs beyond the repo itself:
 | **Blender** | Blender 4.5+ | `python tools/build_extension.py`, then **Edit ▸ Preferences ▸ Add-ons ▸ Install from Disk** with the zip it produces | opens with Blender |
 | **Maya** | Maya 2025+ (PySide6, Python 3.11) | `python maya/install.py` — writes a module file into Maya's modules folder | **Kitsu** menu appears after restart |
 | **Nuke** | Nuke 16+ | `"path/to/Nuke's python.exe" nuke/install.py` — patches `~/.nuke/menu.py` | **Kitsu** menu appears after restart |
+| **JOS Compositor** | a JOS build with Python scripting (it bundles Python 3.12, PySide6 and `requests`) | `python jos/install.py` — writes `BB_Kitsu/menu.py` into JOS's plugin folder; or set `JOS_PLUGIN_PATH` to `jos/` | **Kitsu** menu appears after restart |
 | **Resolve** | **Resolve Studio** (the free version has no external scripting API), and **PySide6 or PySide2** pip-installed in whichever Python runs the launcher | copy `resolve/kitsu_resolve_publisher.py`, `resolve/BB_pipeline_resolve/` and `BB_core/` anywhere — not `Scripts/Comp` | `python kitsu_resolve_publisher.py`, as its own process, with Resolve already running and a project open — **never** through Workspace ▸ Scripts (see the Resolve section below for why) |
 
 Each tool asks for the Kitsu server URL and your email on first connect; the
@@ -927,6 +931,51 @@ Rendering and review submission. Blender has both; Nuke has the browser, work
 files and publishing. Executing Write nodes to the pipeline path is the next
 piece.
 
+## JOS Compositor
+
+The Nuke integration, ported to JOS Compositor's embedded Python (the `jos`
+module). It is the same shape, does the same things and has the same menu:
+Browser, Create Write Node, Save Next Version, Update Kitsu and Settings.
+`BB_core` is shared unchanged; JOS has its own `[dcc.jos]` block:
+
+```toml
+[dcc.jos]
+ext = "joscomp"
+scene_folder = "2DScene"
+render_folder = "2DRenders"
+departments = ["Compositing", "2D"]
+```
+
+Its departments are Nuke's on purpose. A studio comps in one or the other,
+or in both, and then each shows the task with its own files under it, as
+Maya and Blender do for Modeling.
+
+### Install
+
+```bash
+python jos/install.py
+```
+
+This writes `BB_Kitsu/menu.py` into JOS's user plugin folder
+(`%APPDATA%/Jungle of Sharks/JOS Compositor/plugins`). That file points at
+this repository, so the repository stays the only copy. `--remove` deletes
+it. A studio can instead add this `jos/` folder to `JOS_PLUGIN_PATH`.
+
+### What changes from Nuke
+
+| Nuke | JOS |
+|---|---|
+| a hidden knob on the root holds the context stamp | project metadata (`jos.set_metadata`), saved in the .joscomp |
+| `nodePaste` imports another version | `jos.import_project` pastes its nodes beside the comp |
+| PyScript knobs on the Kitsu Write | button parameters (`add_param(kind='button')`), saved with the project |
+| a Kitsu tab on the Write | labelled parameters (JOS has no parameter tabs yet) |
+| `colorspace='sRGB'` for review media | the Write's display transform: the project's OCIO display |
+| a Write Kitsu entry in the Nodes (Tab) menu | not ported yet: Kitsu > Create Write Node (Ctrl+Alt+W) |
+
+Save Next Version repoints the Kitsu Writes *before* it saves. Nuke's
+version saves first and then repoints, so its new .nk on disk keeps the
+previous version's Write paths until it is saved again.
+
 ## DaVinci Resolve
 
 Resolve browses **shots only**, and its own department list is grading and
@@ -1298,6 +1347,14 @@ licence needed:
 "C:/Program Files/Nuke16.0v6/python.exe" tests/nuke_check.py
 ```
 
+The JOS side stubs only Kitsu. It runs under `jos-python`, JOS's headless
+interpreter (its `nuke -t`, with no licence), so the projects, Writes,
+renders and review movies it checks are real:
+
+```bash
+jos-python --no-plugins tests/jos_check.py
+```
+
 The Maya side stubs nothing at all. `mayapy` has a licence for
 `maya.standalone`, so there is a real scene graph, a real `fileInfo` and real
 render globals to check against — which is the only way to prove a stamp
@@ -1319,8 +1376,8 @@ panel when its draw callback raises, reporting nothing:
 Each was written after the bug it describes reached a running DCC, and each is
 verified to fail when that bug is put back.
 
-Verified against Blender 4.5, 5.0, 5.1 and 5.2, Nuke 16.0v6, and
-Maya 2026.
+Verified against Blender 4.5, 5.0, 5.1 and 5.2, Nuke 16.0v6,
+Maya 2026, and JOS Compositor (local build, 2026-10-04).
 
 ## Licence
 

@@ -1,0 +1,1069 @@
+'''The Kitsu browser, as a JOS Compositor dialog.
+
+The Nuke browser's, for JOS: PySide6, which JOS bundles against its own
+Qt. Qt is imported inside the
+functions that need it so the rest of this package can be exercised by a plain
+interpreter with no Qt at all - which is how it gets tested on a machine with
+no JOS running.
+
+Shots only and compositing tasks only, which is what lets the whole
+navigation collapse into one tree: a comper never has a reason to see a
+lighting or FX task, so the department column Prism spends space on has
+nothing left to say.
+'''
+import os
+
+from BB_core import credentials, settings, workfiles
+from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
+
+from . import (capture, fetch, publish, review, scripts, session, stamp,
+               thumbnails)
+
+state = session.state
+
+VERSION_ICON_WIDTH = 96
+TITLE = 'Kitsu Browser'
+
+
+def _version():
+    from . import __version__
+    return __version__
+
+
+def _qt():
+    from PySide6 import QtCore, QtWidgets
+    return QtCore, QtWidgets
+
+
+def _parent():
+    '''JOS's main window, so the dialog behaves like part of the app.'''
+    try:
+        import jos
+        import shiboken6
+        from PySide6 import QtWidgets
+        if jos.main_window():
+            return shiboken6.wrapInstance(jos.main_window(), QtWidgets.QMainWindow)
+    except Exception:
+        pass
+    try:
+        from PySide6 import QtWidgets
+        for widget in QtWidgets.QApplication.topLevelWidgets():
+            if widget.inherits('QMainWindow') and widget.parent() is None:
+                return widget
+    except Exception:
+        pass
+    return None
+
+
+class Browser(object):
+    '''Built as a plain object holding a dialog, not a QDialog subclass.
+
+    Subclassing across a reload leaves the app holding a stale class object and
+    the second call fails in a way that reads like the panel is broken. This
+    keeps the Qt objects behind an ordinary Python instance that can be thrown
+    away and rebuilt.
+    '''
+
+    def __init__(self):
+        QtCore, QtWidgets = _qt()
+
+        self.dialog = QtWidgets.QDialog(_parent())
+        # Versioned, because Python caches imported modules and a session
+        # that was never restarted runs old code while looking identical.
+        self.dialog.setWindowTitle('%s  %s' % (TITLE, _version()))
+        self.dialog.resize(880, 540)
+
+        layout = QtWidgets.QVBoxLayout(self.dialog)
+
+        self.status = QtWidgets.QLabel('')
+        self.status.setWordWrap(True)
+
+        # One header line. The project is the only thing still a dropdown,
+        # because it is the one choice that is not part of the tree.
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(QtWidgets.QLabel('Project'))
+        self.project = QtWidgets.QComboBox()
+        header.addWidget(self.project, 1)
+        layout.addLayout(header)
+
+        panes = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        # -- left: sequence / shot / task, as one tree ------------------------
+        left = QtWidgets.QWidget()
+        left_column = QtWidgets.QVBoxLayout(left)
+        left_column.setContentsMargins(0, 0, 0, 0)
+
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setUniformRowHeights(True)
+        left_column.addWidget(self.tree, 1)
+
+        # Range, rate and size as one line. Prism gives this a panel of its
+        # own with an empty thumbnail slot in it; it is three numbers.
+        self.facts = QtWidgets.QLabel('')
+        self.facts.setStyleSheet('color:#8a8a8a')
+        left_column.addWidget(self.facts)
+        panes.addWidget(left)
+
+        # -- right: the versions, each with the picture it saved --------------
+        right = QtWidgets.QWidget()
+        right_column = QtWidgets.QVBoxLayout(right)
+        right_column.setContentsMargins(0, 0, 0, 0)
+
+        # On by default: a task with a flagged master is, by construction,
+        # one somebody has already decided is the right one to comp against -
+        # every WIP render in between is noise for that purpose, not a
+        # choice worth showing alongside it every time this opens.
+        self.master_only = QtWidgets.QCheckBox('Master only')
+        self.master_only.setChecked(bool(settings.get('master_only', True)))
+        right_column.addWidget(self.master_only)
+
+        self.versions = QtWidgets.QListWidget()
+        self.versions.setIconSize(QtCore.QSize(VERSION_ICON_WIDTH,
+                                               VERSION_ICON_WIDTH * 9 // 16))
+        right_column.addWidget(self.versions, 1)
+
+        buttons = QtWidgets.QHBoxLayout()
+        self.open_button = QtWidgets.QPushButton('Open')
+        self.new_button = QtWidgets.QPushButton('New Version')
+        self.new_from_button = QtWidgets.QPushButton('New from Current')
+        for widget in (self.open_button, self.new_button, self.new_from_button):
+            buttons.addWidget(widget)
+        right_column.addLayout(buttons)
+
+        # Import is its own row: the three above replace what is open, this
+        # one adds to it, and a mis-click between those two is expensive.
+        self.import_button = QtWidgets.QPushButton('Import into Current Project')
+        right_column.addWidget(self.import_button)
+        panes.addWidget(right)
+
+        panes.setStretchFactor(0, 38)
+        panes.setStretchFactor(1, 62)
+        panes.setSizes([330, 550])
+        layout.addWidget(panes, 1)
+
+        layout.addWidget(self.status)
+
+        footer = QtWidgets.QHBoxLayout()
+        self.settings_button = QtWidgets.QPushButton('Settings...')
+        self.refresh_button = QtWidgets.QPushButton('Refresh')
+        footer.addWidget(self.settings_button)
+        footer.addStretch(1)
+        footer.addWidget(self.refresh_button)
+        layout.addLayout(footer)
+
+        self.project.currentIndexChanged.connect(self._on_project)
+        self.tree.currentItemChanged.connect(self._on_tree)
+        self.versions.itemDoubleClicked.connect(self._on_double_click)
+
+        self.open_button.clicked.connect(self._open)
+        self.new_button.clicked.connect(lambda: self._create(False))
+        self.new_from_button.clicked.connect(lambda: self._create(True))
+        self.import_button.clicked.connect(self._import)
+        self.settings_button.clicked.connect(self._settings)
+        self.refresh_button.clicked.connect(self.reload)
+        self.master_only.stateChanged.connect(self._on_master_only_changed)
+
+        self._loading = False
+        self._sequence_id = ''
+        self._shot_id = ''
+        self._task_id = ''
+        self._authoring = True
+        self._renders = []
+        self._rows = []
+
+    # -- filling in -----------------------------------------------------------
+
+    def reload(self):
+        """Reconnect if needed and refill everything from Kitsu."""
+        if not state.connected:
+            problem = fetch.connect()
+            if problem:
+                self._say(problem, error=True)
+                return
+
+        self._fill(self.project, state.projects, settings.get('last_project'))
+
+    def _fill(self, combo, rows, remembered=None):
+        """Refill a combo, keeping the id on each item and restoring a choice."""
+        self._loading = True
+        try:
+            combo.clear()
+            for row in rows:
+                combo.addItem(row.get('name', '?'), row['id'])
+            if remembered:
+                index = combo.findData(remembered)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+        finally:
+            self._loading = False
+
+        if combo.count():
+            combo.currentIndexChanged.emit(combo.currentIndex())
+
+    def _id(self, combo):
+        return combo.currentData()
+
+    # -- the tree -------------------------------------------------------------
+
+    def _on_project(self, _index=0):
+        if self._loading:
+            return
+        project_id = self._id(self.project)
+        if not project_id:
+            return
+        settings.set('last_project', project_id)
+        fetch.project_selected(project_id)
+        self._say(state.message, state.is_error)
+        self._build_tree()
+
+    def _build_tree(self):
+        """Sequences and their shots. Tasks arrive when a shot is chosen.
+
+        Shots are already in hand - the project fetch brings the whole list -
+        so they cost nothing here. Tasks are per-entity in Kitsu, so a tree
+        that showed them everywhere would be one request per shot.
+        """
+        QtCore, QtWidgets = _qt()
+
+        self._loading = True
+        restore = None
+        try:
+            self.tree.clear()
+            wanted_shot = settings.get('last_shot')
+
+            for sequence in state.sequences:
+                node = QtWidgets.QTreeWidgetItem(self.tree,
+                                                 [sequence.get('name') or '?'])
+                node.setData(0, QtCore.Qt.UserRole, ('group', sequence['id']))
+
+                for shot in state.shots_in(sequence['id']):
+                    leaf = QtWidgets.QTreeWidgetItem(node,
+                                                     [shot.get('name') or '?'])
+                    leaf.setData(0, QtCore.Qt.UserRole, ('entity', shot['id']))
+                    if shot['id'] == wanted_shot:
+                        restore = leaf
+        finally:
+            self._loading = False
+
+        if restore is not None:
+            restore.parent().setExpanded(True)
+            self.tree.setCurrentItem(restore)
+        elif self.tree.topLevelItemCount():
+            self.tree.topLevelItem(0).setExpanded(True)
+
+    def _on_tree(self, item, _previous=None):
+        if self._loading or item is None:
+            return
+
+        QtCore, _QtWidgets = _qt()
+        payload = item.data(0, QtCore.Qt.UserRole)
+        if not payload:
+            return
+        kind, identifier = payload
+
+        if kind == 'group':
+            self._sequence_id = identifier
+            settings.set('last_sequence', identifier)
+            item.setExpanded(not item.isExpanded())
+            return
+
+        if kind == 'entity':
+            parent = item.parent()
+            if parent is not None:
+                self._sequence_id = parent.data(0, QtCore.Qt.UserRole)[1]
+                settings.set('last_sequence', self._sequence_id)
+            self._shot_id = identifier
+            settings.set('last_shot', identifier)
+            self._load_tasks(item, identifier)
+            return
+
+        parent = item.parent()
+        if parent is not None:
+            above = parent.data(0, QtCore.Qt.UserRole)
+            if above and above[0] == 'entity':
+                self._shot_id = above[1]
+        self._task_id = identifier
+        settings.set('last_task', identifier)
+        task = next((t for t in state.tasks if t['id'] == identifier), None)
+        self._authoring = state.authors(task) if task else True
+        self._refresh_versions()
+
+    def _load_tasks(self, node, shot_id):
+        """Hang this shot's compositing tasks under it and pick one."""
+        QtCore, QtWidgets = _qt()
+
+        fetch.shot_selected(shot_id)
+        self._say(state.message, state.is_error)
+
+        # Guarded because it is a caption. It runs before the tasks are
+        # built, so anything it throws takes the navigation with it - which
+        # is how a shot with no frame range came to look like a shot with no
+        # tasks.
+        try:
+            self._show_facts(shot_id)
+        except Exception as error:
+            self.facts.setText('')
+            print('BB Kitsu Pipeline: could not describe the shot (%s)' % error)
+
+        self._loading = True
+        chosen = None
+        try:
+            node.takeChildren()
+            wanted = settings.get('last_task')
+            for task in state.browsable_tasks():
+                label = state.task_type_name(task.get('task_type_id', '')) or '?'
+                if not state.authors(task):
+                    # Said plainly, because the buttons change underneath it.
+                    label = '%s  (renders)' % label
+                leaf = QtWidgets.QTreeWidgetItem(node, [label])
+                leaf.setData(0, QtCore.Qt.UserRole, ('task', task['id']))
+                if chosen is None or task['id'] == wanted:
+                    chosen = leaf
+        finally:
+            self._loading = False
+
+        node.setExpanded(True)
+
+        if chosen is None:
+            self._task_id = ''
+            self.versions.clear()
+            self._enable_actions(False)
+            return
+
+        # One compositing task is the normal case, so selecting it rather than
+        # making the artist click it again is the whole point of filtering by
+        # department in the first place.
+        self.tree.setCurrentItem(chosen)
+
+    def _show_facts(self, shot_id):
+        """Range, rate and size for the selected shot, as one line."""
+        from BB_core import frames
+
+        shot = state.shot(shot_id) or {}
+        project = state.project(self._id(self.project)) or {}
+
+        facts = []
+        # None, not a pair, when a shot carries no frame data - which plenty
+        # do. Unpacking it raised, and the raise happened before the task
+        # rows were built, so the shot simply appeared to have no tasks.
+        span = frames.frame_range(shot)
+        if span:
+            facts.append('%d-%d' % span)
+
+        rate = frames.fps(project, shot)
+        if rate:
+            facts.append(frames.describe(rate))
+
+        size = frames.resolution(project, shot)
+        if size:
+            facts.append('%dx%d' % size)
+
+        self.facts.setText('  ·  '.join(facts))
+
+    def _entity_pixmap(self, shot_id):
+        """The shot's own thumbnail from Kitsu, or None.
+
+        Kitsu cannot say what a particular work version looked like - its
+        preview files are numbered by a revision counter that counts
+        publishes and review comments, so none of them maps to v007 - but it
+        can say what the shot is, which is what makes a row recognisable.
+        """
+        if not state.connected:
+            return None
+        try:
+            return thumbnails.pixmap(state.client, state.shot(shot_id),
+                                     width=VERSION_ICON_WIDTH)
+        except Exception:
+            return None
+
+    def _enable_actions(self, enabled):
+        self.open_button.setEnabled(enabled)
+        self.import_button.setEnabled(enabled)
+
+    def _on_master_only_changed(self, _state=0):
+        settings.set('master_only', self.master_only.isChecked())
+        self._refresh_versions()
+
+    def _refresh_versions(self):
+        self.versions.clear()
+        self._renders = []
+
+        entity_context = self.context()
+        if entity_context is None:
+            self._enable_actions(False)
+            return
+
+        if self._authoring:
+            self._list_scripts(entity_context)
+        else:
+            self._list_renders(entity_context)
+
+        self._show_buttons()
+
+    def _show_buttons(self):
+        """Only offer what the selected task can actually do.
+
+        A lighting task has no script to open and none to create - JOS is
+        not the application that makes it. Leaving those three buttons
+        sitting there enabled would be offering to write a JOS project into
+        somebody else's task folder.
+        """
+        for button in (self.open_button, self.new_button, self.new_from_button):
+            button.setVisible(self._authoring)
+        # Master only means something for a rendered sequence - which one is
+        # the comp-against version - and nothing for JOS's own projects,
+        # where every version is just a script, not a flagged deliverable.
+        self.master_only.setVisible(not self._authoring)
+
+    def _list_scripts(self, entity_context):
+        _QtCore, QtWidgets = _qt()
+
+        found = fetch.list_versions(entity_context)
+        config = session.config_for(entity_context)
+        fallback = self._entity_pixmap(self._shot_id)
+
+        # The task's master first, when there is one: the script other tasks
+        # read, whatever version it holds. It opens, and imports, like any
+        # other row.
+        self._rows = []
+        master_file = self._master_file(entity_context, config)
+        if master_file is not None:
+            item = QtWidgets.QListWidgetItem(
+                'Master    %s' % os.path.basename(str(master_file)))
+            self._decorate_master(item, entity_context, config, fallback)
+            self.versions.addItem(item)
+            self._rows.append(master_file)
+
+        for version, path in reversed(found):
+            item = QtWidgets.QListWidgetItem(
+                'v%03d    %s' % (version, os.path.basename(str(path))))
+            self._decorate(item, entity_context, version, config, fallback)
+            self.versions.addItem(item)
+            self._rows.append(path)
+
+        if found:
+            self.versions.setCurrentRow(len(self._rows) - len(found))
+            self.new_button.setText('New v%03d' % (found[-1][0] + 1))
+        else:
+            self.new_button.setText('Create v001')
+            self._say('no script yet for this task')
+
+        self._enable_actions(bool(found))
+
+    def _list_renders(self, entity_context):
+        """Rendered sequences on disk for a task JOS does not author.
+
+        Read off the disk rather than out of Kitsu on purpose. Kitsu holds
+        the review movie, re-encoded to H.264 and often at review
+        resolution; what a comp needs is the EXR sequence that movie was
+        made from, which only the render root has.
+        """
+        _QtCore, QtWidgets = _qt()
+
+        config = session.config_for(entity_context)
+        fallback = self._entity_pixmap(self._shot_id)
+
+        streams = sorted(getattr(config, 'streams', {}) or {'main': {}})
+
+        if self.master_only.isChecked():
+            from BB_core import master
+
+            master_version = (master.current_master(state.client, self._task_id)
+                              if state.connected else None)
+            rows = []
+            for stream in streams:
+                try:
+                    frames = master.master_frames(entity_context, stream, config)
+                except Exception:
+                    frames = None
+                if frames is not None:
+                    pattern, first, last = frames
+                    rows.append((stream, pattern, first, last))
+
+            name = 'Master (v%03d)' % master_version if master_version else 'Master'
+            for stream, pattern, first, last in sorted(rows):
+                label = '%s    %s    %d-%d' % (name, stream, first, last)
+                if stream == 'main':
+                    label = '%s    %d-%d' % (name, first, last)
+                item = QtWidgets.QListWidgetItem(label)
+                self.versions.addItem(item)
+                self._renders.append((pattern, first, last))
+        else:
+            rows = []
+            for stream in streams:
+                try:
+                    for version, pattern, first, last in workfiles.render_versions(
+                            entity_context, stream, config):
+                        rows.append((version, stream, pattern, first, last))
+                except Exception:
+                    continue
+
+            for version, stream, pattern, first, last in sorted(rows, reverse=True):
+                label = 'v%03d    %s    %d-%d' % (version, stream, first, last)
+                if stream == 'main':
+                    label = 'v%03d    %d-%d' % (version, first, last)
+                item = QtWidgets.QListWidgetItem(label)
+                self._decorate(item, entity_context, version, config, fallback)
+                self.versions.addItem(item)
+                self._renders.append((pattern, first, last))
+
+        if self._renders:
+            self.versions.setCurrentRow(0)
+        elif self.master_only.isChecked():
+            self._say('no master flagged yet for this task')
+        else:
+            self._say('nothing rendered yet for this task')
+
+        self._enable_actions(bool(self._renders))
+
+    def _decorate(self, item, entity_context, version, config, fallback):
+        picture = None
+        try:
+            picture = thumbnails.from_file(
+                workfiles.thumb_file(entity_context, session.DCC, version, config),
+                width=VERSION_ICON_WIDTH)
+        except Exception:
+            picture = None
+        if picture is None:
+            picture = fallback
+        if picture is not None:
+            from PySide6 import QtGui
+            item.setIcon(QtGui.QIcon(picture))
+
+    def context(self):
+        # From the tree's own ids. The sequence, shot and task combo boxes
+        # these used to read were removed with the middle column, and reading
+        # a widget that no longer exists raised before a single version row
+        # could be built - an empty list rather than a visible error.
+        return fetch.current_context(self._id(self.project), self._sequence_id,
+                                     self._shot_id, self._task_id)
+
+    # -- actions --------------------------------------------------------------
+
+    def _selected_path(self):
+        row = self.versions.currentRow()
+        rows = getattr(self, '_rows', None) or []
+        if row < 0 or row >= len(rows):
+            return ''
+        return str(rows[row])
+
+    def _master_file(self, entity_context, config):
+        from BB_core import master
+        try:
+            return master.master_scene(entity_context, session.DCC, config)
+        except Exception:
+            return None
+
+    def _decorate_master(self, item, entity_context, config, fallback):
+        from BB_core import master
+        picture = None
+        try:
+            picture = thumbnails.from_file(
+                master.master_thumb_file(entity_context, session.DCC, config),
+                width=VERSION_ICON_WIDTH)
+        except Exception:
+            picture = None
+        if picture is None:
+            picture = fallback
+        if picture is not None:
+            from PySide6 import QtGui
+            item.setIcon(QtGui.QIcon(picture))
+
+    def _open(self):
+        path = self._selected_path()
+        if not path:
+            self._say('No version selected', error=True)
+            return
+
+        # Always asked, never a setting. Which answer is right changes from
+        # one open to the next - a comp being finished with is replaced, one
+        # still wanted for copying nodes out of is not - so a stored choice
+        # is wrong half the time, and a stored choice written by an older
+        # build silently stopped this being asked at all.
+        where = 'here'
+        if scripts.current_path():
+            where = self._ask_where(path)
+            if not where:
+                return
+
+        if where == 'new':
+            try:
+                scripts.open_elsewhere(path)
+            except scripts.ScriptError as error:
+                self._say(str(error), error=True)
+                return
+            self._say('opening %s in a second JOS' % os.path.basename(path))
+            self.dialog.accept()
+            return
+
+        if not self._settle_unsaved(path):
+            return
+
+        try:
+            opened = scripts.open_version(path, self.context())
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+        if opened:
+            self._say('opened %s' % os.path.basename(opened))
+            self.dialog.accept()
+
+    def _ask_where(self, path):
+        """'here', 'new' or '' - only asked when the setting says to."""
+        _QtCore, QtWidgets = _qt()
+
+        open_script = os.path.basename(scripts.current_path())
+
+        box = QtWidgets.QMessageBox(self.dialog)
+        box.setWindowTitle(TITLE)
+        box.setText('Open %s' % os.path.basename(path))
+        box.setInformativeText(
+            'Replace %s, or open alongside it?  A second JOS keeps '
+            'this one on screen, which is what you want for copying '
+            'nodes across.' % (open_script or 'the open script'))
+        here = box.addButton('Replace This One',
+                             QtWidgets.QMessageBox.AcceptRole)
+        other = box.addButton('Open Alongside',
+                              QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(here)
+        box.exec()
+
+        if box.clickedButton() is here:
+            return 'here'
+        if box.clickedButton() is other:
+            return 'new'
+        return ''
+
+    def _settle_unsaved(self, path):
+        """True when it is alright to replace what is open.
+
+        Only asked when the open script has somewhere to be saved and has
+        really changed. The pipeline stamps the root and repoints Writes, so
+        a script can be 'modified' without the artist having touched it -
+        which is why this compares against the file on disk rather than
+        trusting jos.modified() alone.
+        """
+        _QtCore, QtWidgets = _qt()
+
+        if not scripts.is_modified() or not scripts.current_path():
+            return True
+
+        box = QtWidgets.QMessageBox(self.dialog)
+        box.setWindowTitle(TITLE)
+        box.setText('%s has unsaved changes.'
+                    % os.path.basename(scripts.current_path()))
+        box.setInformativeText('Save it before opening %s?'
+                               % os.path.basename(path))
+        save = box.addButton('Save', QtWidgets.QMessageBox.AcceptRole)
+        discard = box.addButton("Don't Save", QtWidgets.QMessageBox.DestructiveRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.exec()
+
+        if box.clickedButton() is save:
+            try:
+                scripts.save_open_script()
+            except scripts.ScriptError as error:
+                self._say(str(error), error=True)
+                return False
+            return True
+        return box.clickedButton() is discard
+
+    def _import(self):
+        if not self._authoring:
+            self._read_selected_render()
+            return
+
+        path = self._selected_path()
+        if not path:
+            self._say('No version selected', error=True)
+            return
+        try:
+            scripts.import_into_current(path)
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+
+        self._say('imported %s' % os.path.basename(path))
+        self.dialog.accept()
+
+    def _read_selected_render(self):
+        """Bring a rendered sequence in as a Read node.
+
+        The sequence off the render root, not the movie off Kitsu. Kitsu's
+        copy is re-encoded H.264 for review; comping against it would throw
+        away the float data and the resolution the render was made at.
+        """
+        row = self.versions.currentRow()
+        if row < 0 or row >= len(self._renders):
+            self._say('No render selected', error=True)
+            return
+
+        pattern, first, last = self._renders[row]
+        try:
+            read = scripts.read_sequence(pattern, first, last)
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+
+        self._say('read %s' % os.path.basename(pattern))
+        if read is not None:
+            self.dialog.accept()
+
+    def _create(self, from_current):
+        entity_context = self.context()
+        try:
+            path = scripts.create_version(entity_context, from_current=from_current)
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+        if not path:
+            return
+
+        self._refresh_versions()
+        self._say('created %s' % os.path.basename(path))
+        self.dialog.accept()
+        ask_to_publish(path)
+
+    def _on_double_click(self, _item=None):
+        '''Double-clicking a row does what that row's main button does.
+
+        Open for a script, Import for someone else's render - the buttons
+        stay, this is only the shorter way to the same thing.
+        '''
+        if self._authoring:
+            self._open()
+        else:
+            self._import()
+
+    def _settings(self):
+        show_settings()
+        self.reload()
+
+    def _say(self, message, error=False):
+        if not message:
+            self.status.setText('')
+            return
+        colour = '#e06c5a' if error else '#8a8a8a'
+        self.status.setText('<span style="color:%s">%s</span>' % (colour, message))
+
+    def show(self):
+        self.reload()
+        self.dialog.show()
+        self.dialog.raise_()
+
+
+_browser = None
+
+
+def show_browser():
+    '''Open the browser, rebuilding it so a reloaded module is picked up.'''
+    global _browser
+    _browser = Browser()
+    _browser.show()
+    return _browser
+
+
+# -- the publish prompt ------------------------------------------------------
+
+def ask_save_choices(entity_context, path, title='Update Kitsu',
+                     ok_text='OK'):
+    '''Ask what a save should also do. Returns the choices, or None.
+
+    None is Cancel, and a caller given None does nothing at all - which is
+    what lets Save Next Version ask before it writes anything, rather than
+    writing the version and then asking about it.
+
+    Shown even when there is nowhere to publish to: whether the version
+    becomes the master is a question of its own, asked on every save.
+    '''
+    QtCore, QtWidgets = _qt()
+
+    dialog = QtWidgets.QDialog(_parent())
+    dialog.setWindowTitle(title)
+    dialog.setMinimumWidth(420)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.addWidget(QtWidgets.QLabel(os.path.basename(str(path))))
+
+    blocked = publish.why_not(entity_context)
+    to_kitsu = QtWidgets.QCheckBox('Publish to Kitsu')
+    to_kitsu.setChecked(not blocked)
+    to_kitsu.setEnabled(not blocked)
+    layout.addWidget(to_kitsu)
+    if blocked:
+        why = QtWidgets.QLabel('Nothing goes to Kitsu: %s' % blocked)
+        why.setWordWrap(True)
+        layout.addWidget(why)
+
+    comment = QtWidgets.QPlainTextEdit(publish.default_comment(path))
+    comment.setMaximumHeight(90)
+    layout.addWidget(comment)
+
+    status = QtWidgets.QComboBox()
+    status.addItem('Leave unchanged', None)
+    for row in state.statuses:
+        status.addItem(row.get('name', '?'), row['id'])
+    form = QtWidgets.QFormLayout()
+    form.addRow('Status', status)
+    layout.addLayout(form)
+
+    # A snapshot is a one-frame render, so it is offered rather than assumed -
+    # but it is on by default, because a task with no picture is the reason
+    # most shots have no thumbnail in Kitsu at all.
+    source = capture.describe()
+    snapshot = QtWidgets.QCheckBox(
+        'Attach a snapshot of %s' % (source or 'the Viewer'))
+    snapshot.setChecked(bool(source))
+    snapshot.setEnabled(bool(source))
+    if not source:
+        snapshot.setText('Nothing to snapshot - select a node or open a Viewer')
+    layout.addWidget(snapshot)
+
+    def follow(_state=0):
+        for widget in (comment, status, snapshot):
+            widget.setEnabled(to_kitsu.isChecked()
+                              and (widget is not snapshot or bool(source)))
+    to_kitsu.stateChanged.connect(follow)
+    follow()
+
+    as_master = QtWidgets.QCheckBox('Save as Master')
+    as_master.setToolTip("Also copy this over the task's master - the one "
+                         "script other tasks read, whatever version it holds")
+    as_master.setChecked(True)
+    layout.addWidget(as_master)
+
+    box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    box.button(QtWidgets.QDialogButtonBox.Ok).setText(ok_text)
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    layout.addWidget(box)
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+
+    return {'publish': to_kitsu.isChecked() and not blocked,
+            'comment': comment.toPlainText(),
+            'status': status.currentData(),
+            'snapshot': snapshot.isChecked() and bool(source),
+            'master': as_master.isChecked()}
+
+
+def carry_out(choices, entity_context, path):
+    '''Do what ask_save_choices was told, for a version already on disk.'''
+    notes = []
+    if choices.get('master'):
+        notes.append(scripts.make_master(entity_context, path))
+
+    problem = ''
+    if choices.get('publish'):
+        picture, problem = (capture.snapshot() if choices.get('snapshot')
+                            else (None, ''))
+        try:
+            notes.append(publish.send(
+                entity_context, path, comment=choices.get('comment', ''),
+                task_status_id=choices.get('status'), preview=picture,
+                master=choices.get('master', False)))
+        finally:
+            if picture:
+                capture.discard(picture)
+
+    # A snapshot that was asked for and did not happen has to say so. Silently
+    # posting a comment with no picture looks exactly like the feature working.
+    if problem:
+        import jos
+        jos.message('The comment was posted, but no thumbnail.'
+                     + chr(10) + chr(10) + problem)
+    note = ' - '.join(n for n in notes if n)
+    state.say(note)
+    return note
+
+
+def ask_to_publish(path):
+    '''After a version has been written: ask, then publish and make master.'''
+    entity_context, _source = stamp.read_current()
+    if entity_context is None:
+        return ''
+    choices = ask_save_choices(entity_context, path)
+    if choices is None:
+        return ''
+    return carry_out(choices, entity_context, path)
+
+
+def ask_to_publish_render(node, frame_count):
+    """Comment and status for a rendered version, then build and upload.
+
+    Separate from the save dialog because what is being sent is different: a
+    movie built from frames on disk, not a snapshot of the Viewer, and the
+    build can take a while on a long shot.
+    """
+    entity_context, _source = stamp.read_current()
+    blocked = publish.why_not(entity_context)
+    if blocked:
+        import jos
+        jos.message(blocked)
+        return ''
+
+    QtCore, QtWidgets = _qt()
+
+    dialog = QtWidgets.QDialog(_parent())
+    dialog.setWindowTitle('Publish Render to Kitsu')
+    dialog.setMinimumWidth(440)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.addWidget(QtWidgets.QLabel(entity_context.versioned()))
+
+    note = QtWidgets.QLabel(
+        '%d frame(s) will be converted to H.264 for Kitsu.' % frame_count)
+    note.setWordWrap(True)
+    layout.addWidget(note)
+
+    comment = QtWidgets.QPlainTextEdit('%s rendered from JOS'
+                                       % entity_context.versioned())
+    comment.setMaximumHeight(90)
+    layout.addWidget(comment)
+
+    status = QtWidgets.QComboBox()
+    status.addItem('Leave unchanged', None)
+    for row in state.statuses:
+        status.addItem(row.get('name', '?'), row['id'])
+    form = QtWidgets.QFormLayout()
+    form.addRow('Status', status)
+    layout.addLayout(form)
+
+    as_master = QtWidgets.QCheckBox('Save as Master')
+    as_master.setToolTip("Also copy these frames into this task's Master - "
+                         "the render the next comp reads, whatever version")
+    as_master.setChecked(True)
+    layout.addWidget(as_master)
+
+    box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    layout.addWidget(box)
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return ''
+
+    QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+    try:
+        result = review.submit(node, comment=comment.toPlainText(),
+                               task_status_id=status.currentData(),
+                               master=as_master.isChecked())
+    finally:
+        QtWidgets.QApplication.restoreOverrideCursor()
+
+    if result and 'updated' not in result.lower():
+        import jos
+        jos.message(result)
+    state.say(result)
+    return result
+
+
+# -- settings ----------------------------------------------------------------
+
+def show_settings():
+    '''Server, login and roots - the handful JOS has nowhere else to keep.'''
+    QtCore, QtWidgets = _qt()
+    values = settings.load()
+
+    dialog = QtWidgets.QDialog(_parent())
+    dialog.setWindowTitle('Kitsu Settings')
+    dialog.setMinimumWidth(460)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    form = QtWidgets.QFormLayout()
+
+    server = QtWidgets.QLineEdit(values.get('server', ''))
+    server.setPlaceholderText('http://kitsu.example.com:8080')
+    email = QtWidgets.QLineEdit(values.get('email', ''))
+    password = QtWidgets.QLineEdit()
+    password.setEchoMode(QtWidgets.QLineEdit.Password)
+    password.setPlaceholderText('only needed once - then stored securely')
+    work_root = QtWidgets.QLineEdit(values.get('work_root', ''))
+    work_root.setPlaceholderText('blank if the Kitsu project brief sets it')
+    render_root = QtWidgets.QLineEdit(values.get('render_root', ''))
+
+    form.addRow('Kitsu Server', server)
+    form.addRow('Email', email)
+    form.addRow('Password', password)
+    form.addRow('Work Root', work_root)
+    form.addRow('Render Root', render_root)
+
+
+    layout.addLayout(form)
+
+    note = QtWidgets.QLabel(
+        'The password goes to the Windows Credential Manager, never to this '
+        'file - the same store Blender and the standalone tools use.')
+    note.setWordWrap(True)
+    layout.addWidget(note)
+
+    result = QtWidgets.QLabel('')
+    result.setWordWrap(True)
+    layout.addWidget(result)
+
+    def test():
+        '''Try the settings as typed, before they are saved.
+
+        Right here, next to the fields, because the alternative is finding out
+        two dialogs later - and a wrong address reads like a wrong password
+        unless something says otherwise.
+        '''
+        typed_server = server.text().strip()
+        typed_email = email.text().strip()
+        secret = password.text() or credentials.get_password(typed_email)
+
+        if not typed_server or not typed_email:
+            result.setText('<span style="color:#e06c5a">'
+                           'Server and email are both needed</span>')
+            return
+        if not secret:
+            result.setText('<span style="color:#e06c5a">'
+                           'No password typed, and none stored</span>')
+            return
+
+        result.setText('Connecting...')
+        QtWidgets.QApplication.processEvents()
+
+        client = KitsuClient(typed_server,
+                             verify=not values.get('allow_insecure_tls'))
+        try:
+            user = client.log_in(typed_email, secret)
+        except (AuthError, KitsuError) as error:
+            result.setText('<span style="color:#e06c5a">%s</span>'
+                           % explain(error, typed_server, typed_email))
+            return
+
+        name = (user or {}).get('full_name') or typed_email
+        result.setText('<span style="color:#6aa84f">Connected as %s - '
+                       '%d project(s)</span>'
+                       % (name, len(client.open_projects())))
+
+    box = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+    test_button = box.addButton('Test Connection',
+                                QtWidgets.QDialogButtonBox.ActionRole)
+    test_button.clicked.connect(test)
+    box.accepted.connect(dialog.accept)
+    box.rejected.connect(dialog.reject)
+    layout.addWidget(box)
+
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return
+
+    settings.save({
+        'server': server.text().strip(),
+        'email': email.text().strip(),
+        'work_root': work_root.text().strip(),
+        'render_root': render_root.text().strip(),
+    })
+
+    typed = password.text()
+    if typed and email.text().strip():
+        credentials.set_password(email.text().strip(), typed)
+
+    state.reset()

@@ -91,6 +91,15 @@ scene_folder = "2DScene"
 render_folder = "2DRenders"
 departments = ["Compositing", "2D"]
 
+[dcc.jos]
+ext = "joscomp"
+scene_folder = "2DScene"
+render_folder = "2DRenders"
+# The same work as Nuke's, deliberately: JOS Compositor is a compositor too,
+# and a studio comps in one or the other (or both - each then shows the
+# task with its own projects under it, as Maya and Blender do for Modeling).
+departments = ["Compositing", "2D"]
+
 [dcc.maya]
 ext = "ma"
 scene_folder = "3DScenes"
