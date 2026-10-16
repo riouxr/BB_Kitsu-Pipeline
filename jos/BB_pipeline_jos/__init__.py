@@ -44,6 +44,11 @@ def install_menu():
     menu.add_separator()
     menu.add_command('Settings...', open_settings)
 
+    # Also in the node picker (Tab), as in Nuke's Nodes menu. Older JOS
+    # builds have no jos.add_node_command: the menu entry is enough there.
+    if hasattr(jos, 'add_node_command'):
+        jos.add_node_command('Kitsu Write', create_write, MENU)
+
     # Printed so it is possible to tell which build JOS actually loaded.
     print('BB Kitsu Pipeline %s loaded from %s'
           % (__version__, os.path.dirname(os.path.dirname(__file__))))
