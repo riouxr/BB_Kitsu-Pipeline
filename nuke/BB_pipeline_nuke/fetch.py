@@ -140,12 +140,20 @@ def shot_selected(shot_id):
 
 
 def list_versions(entity_context):
-    '''Every .nk version on disk for a context, as ``(version, Path)``.'''
+    '''Every version on disk for a context, as ``(version, Path)``.
+
+    The .nk versions and, when the config shares the task's version sequence
+    with another compositor (``shares_versions_with``), its .joscomp files too:
+    one compositing history. The extension says which application a row
+    belongs to (``workfiles.workfile_dcc``).
+    '''
     if entity_context is None:
         return []
     try:
-        found = workfiles.list_workfiles(entity_context, session.DCC,
-                                         session.config_for(entity_context))
+        found = [(version, path) for version, path, _owner in
+                 workfiles.list_shared_workfiles(
+                     entity_context, session.DCC,
+                     session.config_for(entity_context))]
     except Exception as error:
         state.say(str(error), error=True)
         return []

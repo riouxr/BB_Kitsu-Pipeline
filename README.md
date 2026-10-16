@@ -829,6 +829,10 @@ there is nothing to type.
 replace what is open, this one adds to it, and a mis-click between the two is
 expensive. It uses `nodePaste`, so the nodes arrive selected and ready to move.
 
+A task's JOS Compositor versions (`.joscomp`) are listed beside the scripts
+and share their numbering; Open starts JOS on them. See
+[One compositing history with Nuke](#one-compositing-history-with-nuke).
+
 ### Reading somebody else's renders
 
 The tree lists **every** task on the shot, not only the compositing ones. A
@@ -944,11 +948,46 @@ ext = "joscomp"
 scene_folder = "2DScene"
 render_folder = "2DRenders"
 departments = ["Compositing", "2D"]
+shares_versions_with = ["nuke"]
 ```
 
-Its departments are Nuke's on purpose. A studio comps in one or the other,
-or in both, and then each shows the task with its own files under it, as
-Maya and Blender do for Modeling.
+Its departments and folders are Nuke's on purpose: a shot's comp is one
+piece of work, whichever compositor it is done in.
+
+### One compositing history with Nuke
+
+`shares_versions_with` (under `[dcc.jos]`, and `["jos"]` under `[dcc.nuke]`)
+makes Nuke and JOS count one version sequence per task. Both keep their files
+in the task's `2DScene` folder and render into `2DRenders`.
+
+- **Numbering.** `workfiles.next_workfile` counts every sharing application's
+  versions (`workfiles.list_shared_workfiles`). After `sh01_v003.nk`, JOS's
+  Create and Save Next Version make `sh01_v004.joscomp`; after that, Nuke's
+  make `sh01_v005.nk`.
+- **JOS's browser** lists the task's `.nk` versions beside its own, marked
+  *[Nuke - opens as an import]*. Open imports the script into a new, unsaved
+  project (`scripts.open_nuke`, through `jos.import_nuke`). The project keeps
+  the Kitsu context stamped in the script's root (`stamp.read_nuke_script`;
+  the browser's context at the file's version for a script without one).
+  Nuke's Kitsu Writes get JOS's Kitsu buttons (`writenode.adopt`). JOS then
+  offers to save the result as the next version. The `.nk` is never written.
+  Import into Current Project works on a `.nk` too.
+- **Nuke's browser** lists the `.joscomp` versions, marked *[JOS Compositor -
+  opens in JOS]*. Nuke cannot read them, so Open asks, then starts JOS
+  Compositor on the file (`scripts.open_in_jos`, `BB_core/apps.py`: the
+  launcher's `jos_exe`, else `JOS_COMPOSITOR_EXE`, else the default install
+  folder). Import refuses them.
+- **Masters.** Each browser lists every sharing application's master. The
+  launcher's Set Master copies whichever file that version is
+  (`workfiles.find_workfile`), so a JOS version's master is
+  `sh01_master.joscomp`.
+- **Launch** opens the task's latest version in the application its extension
+  names (see `launcher/README.md`).
+
+Either side naming the other is enough to share the sequence, so a one-sided
+sequence can't hand a number out twice. Clear both lists to keep the two
+apart. A studio that comps only in Nuke has no `.joscomp` files, so it sees
+no change.
 
 ### Install
 
@@ -971,6 +1010,7 @@ it. A studio can instead add this `jos/` folder to `JOS_PLUGIN_PATH`.
 | a Kitsu tab on the Write | labelled parameters (JOS has no parameter tabs yet) |
 | `colorspace='sRGB'` for review media | the Write's display transform: the project's OCIO display |
 | a Write Kitsu entry in the Nodes (Tab) menu | not ported yet: Kitsu > Create Write Node (Ctrl+Alt+W) |
+| Open on a `.joscomp` version starts JOS | Open on a `.nk` version imports it (`jos.import_nuke`) |
 
 Save Next Version repoints the Kitsu Writes *before* it saves. Nuke's
 version saves first and then repoints, so its new .nk on disk keeps the
@@ -1377,7 +1417,8 @@ Each was written after the bug it describes reached a running DCC, and each is
 verified to fail when that bug is put back.
 
 Verified against Blender 4.5, 5.0, 5.1 and 5.2, Nuke 16.0v6,
-Maya 2026, and JOS Compositor (local build, 2026-10-04).
+Maya 2026, and JOS Compositor (local build, 2026-10-04; the shared Nuke/JOS
+history against the local build and the installed one, 2026-10-16).
 
 ## Licence
 

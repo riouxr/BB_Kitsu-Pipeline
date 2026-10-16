@@ -13,7 +13,7 @@ nothing left to say.
 '''
 import os
 
-from BB_core import credentials, settings, workfiles
+from BB_core import apps, credentials, settings, workfiles
 from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
 
 from . import (capture, fetch, publish, review, scripts, session, stamp,
@@ -427,18 +427,24 @@ class Browser(object):
         # read, whatever version it holds. It opens, and imports, like any
         # other row.
         self._rows = []
-        master_file = self._master_file(entity_context, config)
-        if master_file is not None:
-            item = QtWidgets.QListWidgetItem(
-                'Master    %s' % os.path.basename(str(master_file)))
-            self._decorate_master(item, entity_context, config, fallback)
+        for dcc, master_file in self._master_files(entity_context, config):
+            label = 'Master    %s' % os.path.basename(str(master_file))
+            if dcc != session.DCC:
+                label += '    [%s]' % apps.name(dcc)
+            item = QtWidgets.QListWidgetItem(label)
+            self._decorate_master(item, entity_context, config, fallback, dcc)
             self.versions.addItem(item)
             self._rows.append(master_file)
 
+        # The task's Nuke scripts are listed too when the config shares the
+        # version sequence with Nuke: marked, since they open by importing.
         for version, path in reversed(found):
-            item = QtWidgets.QListWidgetItem(
-                'v%03d    %s' % (version, os.path.basename(str(path))))
-            self._decorate(item, entity_context, version, config, fallback)
+            label = 'v%03d    %s' % (version, os.path.basename(str(path)))
+            if scripts.is_nuke(path):
+                label += '    [Nuke - opens as an import]'
+            item = QtWidgets.QListWidgetItem(label)
+            self._decorate(item, entity_context, version, config, fallback,
+                           workfiles.workfile_dcc(path, config) or session.DCC)
             self.versions.addItem(item)
             self._rows.append(path)
 
@@ -517,11 +523,13 @@ class Browser(object):
 
         self._enable_actions(bool(self._renders))
 
-    def _decorate(self, item, entity_context, version, config, fallback):
+    def _decorate(self, item, entity_context, version, config, fallback,
+                  dcc=None):
         picture = None
         try:
             picture = thumbnails.from_file(
-                workfiles.thumb_file(entity_context, session.DCC, version, config),
+                workfiles.thumb_file(entity_context, dcc or session.DCC,
+                                     version, config),
                 width=VERSION_ICON_WIDTH)
         except Exception:
             picture = None
@@ -548,19 +556,28 @@ class Browser(object):
             return ''
         return str(rows[row])
 
-    def _master_file(self, entity_context, config):
+    def _master_files(self, entity_context, config):
+        """``[(dcc, path)]``: the task's master, and the master of every
+        application sharing its versions (a Nuke master beside a JOS one)."""
         from BB_core import master
-        try:
-            return master.master_scene(entity_context, session.DCC, config)
-        except Exception:
-            return None
+        found = []
+        for dcc in workfiles.sharing_dccs(config, session.DCC):
+            try:
+                made = master.master_scene(entity_context, dcc, config)
+            except Exception:
+                made = None
+            if made is not None:
+                found.append((dcc, made))
+        return found
 
-    def _decorate_master(self, item, entity_context, config, fallback):
+    def _decorate_master(self, item, entity_context, config, fallback,
+                         dcc=None):
         from BB_core import master
         picture = None
         try:
             picture = thumbnails.from_file(
-                master.master_thumb_file(entity_context, session.DCC, config),
+                master.master_thumb_file(entity_context, dcc or session.DCC,
+                                         config),
                 width=VERSION_ICON_WIDTH)
         except Exception:
             picture = None
@@ -581,6 +598,10 @@ class Browser(object):
         # still wanted for copying nodes out of is not - so a stored choice
         # is wrong half the time, and a stored choice written by an older
         # build silently stopped this being asked at all.
+        if scripts.is_nuke(path):
+            self._open_nuke(path)
+            return
+
         where = 'here'
         if scripts.current_path():
             where = self._ask_where(path)
@@ -608,6 +629,27 @@ class Browser(object):
         if opened:
             self._say('opened %s' % os.path.basename(opened))
             self.dialog.accept()
+
+    def _open_nuke(self, path):
+        '''Import a Nuke version into a new project, then offer to save it.
+
+        Replaces what is open (after the usual unsaved-changes question);
+        never alongside, since a second JOS would not know the Kitsu context.
+        The .nk itself is never written.
+        '''
+        if not self._settle_unsaved(path):
+            return
+        try:
+            imported = scripts.open_nuke(path, self.context())
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+        if imported is None:
+            return
+
+        names, warnings = imported
+        self.dialog.accept()
+        offer_to_save_import(path, names, warnings)
 
     def _ask_where(self, path):
         """'here', 'new' or '' - only asked when the setting says to."""
@@ -766,6 +808,40 @@ def show_browser():
 
 
 # -- the publish prompt ------------------------------------------------------
+
+def offer_to_save_import(path, names, warnings):
+    '''After a Nuke version is imported: save it as the next JOS version?'''
+    import jos
+
+    try:
+        upcoming, version = scripts.upcoming_version()
+    except scripts.ScriptError as error:
+        jos.message('Imported %s (%d nodes).%s%s'
+                    % (os.path.basename(path), len(names), chr(10) * 2, error))
+        return ''
+
+    lines = ['Imported %s from Nuke: %d node(s).'
+             % (os.path.basename(path), len(names))]
+    if warnings:
+        shown = list(warnings)[:8]
+        lines.append('%d import warning(s):' % len(warnings))
+        lines.extend('  ' + str(warning) for warning in shown)
+        if len(warnings) > len(shown):
+            lines.append('  ...')
+    lines.append('')
+    lines.append('Save it now as %s (v%03d)? The Nuke script is left as it is.'
+                 % (os.path.basename(str(upcoming)), version))
+    if not jos.ask(chr(10).join(lines)):
+        return ''
+
+    try:
+        saved = scripts.save_next_version()
+    except scripts.ScriptError as error:
+        jos.message(str(error))
+        return ''
+    print('[Kitsu] saved %s' % saved)
+    return saved
+
 
 def ask_save_choices(entity_context, path, title='Update Kitsu',
                      ok_text='OK'):

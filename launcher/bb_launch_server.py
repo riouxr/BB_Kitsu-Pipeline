@@ -196,8 +196,15 @@ def _handle_set_master(query):
     # has no scene files - its versions are projects in its own database.
     scene_note = ''
     if dcc and dcc != "resolve":
+        # Whichever application saved that version: a comp's v004 may be a
+        # JOS project in a task Nuke owns (``shares_versions_with``), and its
+        # master is then a .joscomp beside the versions.
+        from BB_core import workfiles
+        _path, owner = workfiles.find_workfile(versioned_context, dcc,
+                                               version, config)
         try:
-            made = master.set_master_scene(versioned_context, dcc, config)
+            made = master.set_master_scene(versioned_context, owner or dcc,
+                                           config)
             scene_note = made.name
         except ValueError:
             pass  # no scene file saved for this version

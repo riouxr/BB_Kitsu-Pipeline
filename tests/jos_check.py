@@ -27,6 +27,56 @@ def check(condition, description):
         failures.append(description)
 
 
+# A Nuke 16 script as the Nuke integration saves it: the Kitsu context in the
+# root's hidden BB_pipeline knob, a Kitsu Write with its Kitsu tab. Written by
+# a real Nuke 16.0v6 (BB_pipeline_nuke.stamp.write and writenode._add_tab),
+# with the machine-specific root name left out.
+NUKE_SCRIPT = """#! C:/Program Files/Nuke16.0v6/nuke-16.0.6.dll -nx
+version 16.0 v6
+Root {
+ inputs 0
+ first_frame 1001
+ last_frame 1252
+ format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
+ colorManagement Nuke
+%(stamp)s}
+Constant {
+ inputs 0
+ color {0.5 0.25 0.1 1}
+ name Plate
+}
+Write {
+ file X:/elsewhere/sh02_v001.%%04d.exr
+ file_type exr
+ name KitsuWrite1
+ addUserKnob {20 bb_kitsu l Kitsu}
+ addUserKnob {1 bb_stream l Stream +INVISIBLE}
+ bb_stream main
+ addUserKnob {26 bb_info l Version T sh02_v001}
+ addUserKnob {22 bb_set_path l "Set Output Path" -STARTLINE T "import BB_pipeline_nuke as _bb; _bb.write_set_path(nuke.thisNode())"}
+ addUserKnob {22 bb_add_read l "Add Read Node" -STARTLINE T "import BB_pipeline_nuke as _bb; _bb.write_add_read(nuke.thisNode())"}
+ addUserKnob {22 bb_publish l "Publish to Kitsu" -STARTLINE T "import BB_pipeline_nuke as _bb; _bb.write_publish(nuke.thisNode())"}
+}
+"""
+
+
+def nuke_script(path, entity_context=None):
+    """Write a .nk version, stamped as Nuke stamps it when given a context."""
+    import json
+
+    stamp = ""
+    if entity_context is not None:
+        raw = json.dumps(entity_context.to_dict())
+        for char in ("\\", "{", "}", '"'):
+            raw = raw.replace(char, "\\" + char)
+        stamp = (' addUserKnob {20 User}\n'
+                 ' addUserKnob {1 BB_pipeline l "Kitsu context" +INVISIBLE}\n'
+                 ' BB_pipeline "%s"\n' % raw)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(NUKE_SCRIPT % {"stamp": stamp}, encoding="utf-8")
+    return str(path)
+
+
 def main():
     import jos
 
@@ -193,6 +243,90 @@ def main():
     except scripts.ScriptError:
         refused = True
     check(refused, "a missing file is refused rather than imported")
+
+    # -- one compositing history with Nuke ------------------------------------
+    # A task comped in Nuke first: its .nk versions are listed beside the
+    # .joscomp ones, open by importing, and JOS carries on from their number.
+    state.shots.append({"id": "sh2", "name": "sh02", "parent_id": "s1",
+                        "data": {"frame_in": 1001, "frame_out": 1252}})
+    comp = fetch.current_context("p1", "s1", "sh2", "t2")
+    config = session.config_for(comp)
+    check(workfiles.sharing_dccs(config, "jos") == ["jos", "nuke"],
+          "the preset shares JOS's versions with Nuke's")
+    nk = nuke_script(workfiles.work_file(comp, "nuke", 1, config),
+                     comp.at_version(1))
+    nk_bytes = Path(nk).read_bytes()
+    check(Path(nk).parent == workfiles.scene_dir(comp, "jos", config)
+          and Path(nk).parent.name == "2DScene",
+          "Nuke's scripts sit in JOS's 2DScene folder (%s)" % Path(nk).parent)
+
+    listed = fetch.list_versions(comp)
+    check([(v, Path(p).name) for v, p in listed] == [(1, "sh02_v001.nk")],
+          "the browser lists the Nuke version (%s)" % listed)
+    check(scripts.is_nuke(listed[0][1]) and not scripts.is_nuke(created),
+          "marked as a Nuke file")
+    path, version = scripts.next_version(comp)
+    check(version == 2 and path.name == "sh02_v002.joscomp",
+          "Create would make v002 (%s)" % path.name)
+
+    imported = scripts.open_nuke(nk, comp)
+    check(imported is not None and "Plate" in imported[0]
+          and "KitsuWrite1" in imported[0],
+          "opening the .nk imports it (%s)" % (imported,))
+    check(jos.project_path() == "", "into a new, unsaved project")
+    got = stamp.read()
+    check(got is not None and got.version == 1 and got.task_id == "t2"
+          and got.entity_id == "sh2" and got.server == "http://kitsu.test",
+          "carrying the Kitsu stamp the Nuke script had (%s)"
+          % (got.to_dict() if got else None))
+    kitsu_write = jos.node("KitsuWrite1")
+    check(kitsu_write is not None and writenode.is_ours(kitsu_write)
+          and "bb_set_path" in kitsu_write and "bb_publish" in kitsu_write,
+          "Nuke's Kitsu Write gets JOS's Kitsu buttons")
+    check((jos.first_frame(), jos.last_frame()) == (1001, 1252),
+          "and the script's frame range")
+
+    upcoming, version = scripts.upcoming_version()
+    check(version == 2 and upcoming.name == "sh02_v002.joscomp",
+          "Save Next Version offers v002.joscomp (%s)" % upcoming.name)
+    saved = scripts.save_next_version()
+    check(saved.endswith("sh02_v002.joscomp") and os.path.isfile(saved)
+          and jos.project_path() == saved.replace(os.sep, "/"),
+          "and saves it (%s)" % os.path.basename(saved))
+    check(stamp.read().version == 2, "stamped v002")
+    check("_v002" in kitsu_write["file"] and "2DRenders" in kitsu_write["file"]
+          and kitsu_write["bb_info"] == "sh02_v002",
+          "the imported Kitsu Write renders to v002 (%s)" % kitsu_write["file"])
+    check(Path(nk).read_bytes() == nk_bytes, "the .nk is never written")
+    listed = fetch.list_versions(comp)
+    check([(v, Path(p).suffix) for v, p in listed]
+          == [(1, ".nk"), (2, ".joscomp")],
+          "one history: v001.nk, v002.joscomp (%s)" % listed)
+
+    before = len(jos.all_nodes())
+    scripts.import_into_current(nk)
+    check(len(jos.all_nodes()) == before + 2,
+          "importing a .nk version pastes its nodes (%d -> %d)"
+          % (before, len(jos.all_nodes())))
+    check(all("bb_set_path" in n for n in jos.all_nodes("Write")
+              if writenode.is_ours(n)),
+          "with JOS's Kitsu buttons on its Write")
+    check(Path(nk).read_bytes() == nk_bytes, "still without touching the .nk")
+
+    # A script saved in Nuke without the pipeline's stamp: the browser's
+    # context, at the version in its name.
+    bare = nuke_script(workfiles.work_file(comp, "nuke", 3, config))
+    check(scripts.open_version(bare, comp) == bare,
+          "an unstamped .nk opens through open_version too")
+    got = stamp.read()
+    check(got is not None and got.version == 3 and got.task_id == "t2",
+          "stamped from the browser's context at v003 (%s)"
+          % (got.version if got else None))
+    saved = scripts.save_next_version()
+    check(saved.endswith("sh02_v004.joscomp"),
+          "and Save Next Version makes v004 (%s)" % os.path.basename(saved))
+    check(workfiles.next_workfile(comp, "nuke", config)[0].name == "sh02_v005.nk",
+          "after which Nuke's next is v005.nk")
 
     print()
     if failures:

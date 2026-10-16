@@ -115,9 +115,22 @@ someone specifically wants a terminal-launchable URL.
 
 ### Two launch mechanisms, not one
 
-Blender and Nuke share one mechanism: a version is a file on disk
-(`BB_core.workfiles`/`versioning`), and opening it is
+Blender, Nuke and JOS Compositor share one mechanism: a version is a file
+on disk (`BB_core.workfiles`/`versioning`), and opening it is
 `subprocess.Popen([exe, path])`.
+
+**Compositing is Nuke's and JOS's together.** The preset's
+`shares_versions_with` gives the two one version sequence per task, so
+`list_versions()` lists both (`workfiles.list_shared_workfiles`) and
+`open_version()` starts the application the chosen file's extension names
+(`workfiles.workfile_dcc`): a `.joscomp` opens in JOS, a `.nk` in Nuke,
+whichever of the two the department matched. When both claim a department,
+Nuke comes first in `_EXE_SETTING`, which only decides who creates a task's
+first version. JOS has no create-on-Launch step yet, so a JOS-only studio
+gets "create one from jos first" on an empty task. JOS's executable is the
+`jos_exe` setting, else `C:\Program Files\Jungle of Sharks\JOS
+Compositor\JOSCompositor.exe` (`BB_core/apps.py`). Set Master copies
+whichever application's file holds that version.
 
 **Resolve does not fit that model at all.** A Resolve project lives inside
 Resolve's own project database, addressed by name
@@ -363,7 +376,7 @@ get a login shell that has it.
 
 1. Clone this repo.
 2. `python dcc_versions.py set blender <version or full path>` (and `nuke`,
-   `resolve`).
+   `resolve`, `jos`; JOS in its default folder needs no setting).
 3. `pythonw bb_launch_server.py`, kept running (see
    [Running the server](#running-the-server-not-yet-automatic) - no
    auto-start yet on any machine).

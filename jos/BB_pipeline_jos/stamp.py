@@ -8,8 +8,16 @@ cannot quietly repoint a comp at another shot.
 '''
 import json
 import os
+import re
 
 KEY = 'BB_pipeline'
+
+# The stamp the Nuke integration writes on a script's root (its stamp.py):
+# a hidden String knob holding the same JSON, saved as a Tcl string. Read
+# from the text, so importing a Nuke version keeps its Kitsu ids.
+_NUKE_STAMP = re.compile(r'^[ \t]*(?:BB_pipeline|fake_pipeline)[ \t]+"(.*)"[ \t]*$',
+                         re.MULTILINE)
+_TCL_ESCAPE = re.compile(r'\\(.)')
 
 
 def write(entity_context):
@@ -82,7 +90,7 @@ def _from_session(remembered, name):
     if remembered is None or not name:
         return None
 
-    from BB_core import naming, workfiles
+    from BB_core import versioning, workfiles
 
     from . import session
 
@@ -100,8 +108,30 @@ def _from_session(remembered, name):
         return None
 
     try:
-        version = naming.version_from_name(os.path.basename(str(name)), config)
+        version = versioning.version_from_name(os.path.basename(str(name)), config)
     except Exception:
         version = None
 
     return remembered.at_version(version) if version else remembered
+
+
+def read_nuke_script(path):
+    """The context stamped in a Nuke script by the Nuke integration, or None."""
+    from BB_core.context import EntityContext
+
+    try:
+        with open(str(path), 'r', encoding='utf-8', errors='replace') as handle:
+            text = handle.read()
+    except OSError:
+        return None
+
+    match = _NUKE_STAMP.search(text)
+    if not match:
+        return None
+    raw = _TCL_ESCAPE.sub(
+        lambda m: {'n': chr(10), 't': chr(9)}.get(m.group(1), m.group(1)),
+        match.group(1))
+    try:
+        return EntityContext.from_dict(json.loads(raw))
+    except (ValueError, TypeError):
+        return None

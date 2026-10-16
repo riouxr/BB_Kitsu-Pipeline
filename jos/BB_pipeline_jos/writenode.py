@@ -110,21 +110,46 @@ def create(stream='main'):
 
 
 def _add_params(node, stream, entity_context):
-    node.add_param(STREAM_KNOB, 'string', stream, label='Stream', hidden=True)
-    node.add_param(INFO_KNOB, 'string',
-                   entity_context.versioned() if entity_context else '',
-                   label='Kitsu version',
-                   help='The Kitsu version this Write renders (set by Set '
-                        'Output Path).')
-    node.add_param('bb_set_path', 'button', CALL % 'write_set_path',
-                   label='Set Output Path',
-                   help="Points the Write at this version's render folder.")
-    node.add_param('bb_add_read', 'button', CALL % 'write_add_read',
-                   label='Add Read Node',
-                   help='A Read of what this Write rendered.')
-    node.add_param('bb_publish', 'button', CALL % 'write_publish',
-                   label='Publish to Kitsu',
-                   help='Converts whatever was rendered into H.264 for Kitsu.')
+    """The Kitsu parameters, each added only when the Write lacks it.
+
+    Only when missing, so the same call finishes a Write imported from a
+    Nuke script (``adopt``), which arrives with its stream and nothing else.
+    """
+    def add(name, *args, **kwargs):
+        if name not in node:
+            node.add_param(name, *args, **kwargs)
+
+    add(STREAM_KNOB, 'string', stream, label='Stream', hidden=True)
+    add(INFO_KNOB, 'string',
+        entity_context.versioned() if entity_context else '',
+        label='Kitsu version',
+        help='The Kitsu version this Write renders (set by Set '
+             'Output Path).')
+    add('bb_set_path', 'button', CALL % 'write_set_path',
+        label='Set Output Path',
+        help="Points the Write at this version's render folder.")
+    add('bb_add_read', 'button', CALL % 'write_add_read',
+        label='Add Read Node',
+        help='A Read of what this Write rendered.')
+    add('bb_publish', 'button', CALL % 'write_publish',
+        label='Publish to Kitsu',
+        help='Converts whatever was rendered into H.264 for Kitsu.')
+
+
+def adopt(entity_context=None):
+    """Give the Kitsu Writes of an imported Nuke script JOS's parameters.
+
+    Nuke's Kitsu Write keeps its stream in the same hidden ``bb_stream``
+    knob, which the import carries over; its buttons hold Nuke Python and
+    are not imported. Returns the Writes finished.
+    """
+    adopted = []
+    for node in _jos().all_nodes('Write'):
+        if not is_ours(node):
+            continue
+        _add_params(node, stream_of(node), entity_context)
+        adopted.append(node)
+    return adopted
 
 
 def pattern_of(node):

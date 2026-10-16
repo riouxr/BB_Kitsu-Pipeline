@@ -1,4 +1,4 @@
-"""Switch which installed Blender/Nuke/Resolve build the launcher uses.
+"""Switch which installed Blender/Nuke/Resolve/JOS build the launcher uses.
 
 The launcher itself always opens the *latest saved version* of the scene -
 that part is not a choice. This is about the other version: which build of
@@ -33,9 +33,13 @@ _SEARCH = {
     "resolve": [
         (Path(r"C:\Program Files\Blackmagic Design"), "DaVinci Resolve/Resolve.exe"),
     ],
+    "jos": [
+        (Path(r"C:\Program Files\Jungle of Sharks"), "JOS Compositor*/JOSCompositor.exe"),
+    ],
 }
 
-_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe"}
+_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe",
+            "jos": "jos_exe"}
 
 
 def found(dcc):
@@ -76,7 +80,7 @@ def cmd_current(argv):
 
 def cmd_set(argv):
     if len(argv) < 2:
-        print("usage: dcc_versions.py set <blender|nuke> <version substring or full path>")
+        print("usage: dcc_versions.py set <blender|nuke|resolve|jos> <version substring or full path>")
         return 1
     dcc, wanted = argv[0], argv[1]
     if dcc not in _SETTING:

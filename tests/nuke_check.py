@@ -1094,6 +1094,65 @@ def main():
           "and it keeps the Kitsu ids a filename could never carry")
     nuke_stub._root.knobs.pop("fake_pipeline", None)
 
+    # -- one compositing history with JOS Compositor -------------------------
+    # A shot comped in JOS first: its .joscomp versions are listed beside the
+    # scripts, count towards the next number, and open in JOS - Nuke cannot
+    # read them.
+    shared = _Ctx.from_dict(dict(context.to_dict(), entity="sh05",
+                                 entity_id="sh5", version=0))
+    shared_config = session.config_for(shared)
+    check(workfiles.sharing_dccs(shared_config, "nuke") == ["nuke", "jos"],
+          "the preset shares Nuke's versions with JOS's")
+    jos_file = workfiles.work_file(shared, "jos", 3, shared_config)
+    jos_file.parent.mkdir(parents=True, exist_ok=True)
+    jos_file.write_text("{}", encoding="utf-8")
+    check(jos_file.parent == workfiles.scene_dir(shared, "nuke", shared_config),
+          "JOS's projects sit in Nuke's 2DScene folder (%s)" % jos_file.parent)
+
+    listed = fetch.list_versions(shared)
+    check([(v, Path(p).name) for v, p in listed] == [(3, "sh05_v003.joscomp")],
+          "the browser lists the JOS version (%s)" % listed)
+    check(scripts.is_jos(listed[0][1]) and not scripts.is_jos(created),
+          "marked as a JOS file")
+
+    after_jos = scripts.create_version(shared)
+    check(os.path.basename(after_jos or "") == "sh05_v004.nk",
+          "Create carries on from JOS's v003 (%s)"
+          % os.path.basename(after_jos or ""))
+    after_that = scripts.save_next_version()
+    check(os.path.basename(after_that) == "sh05_v005.nk",
+          "and Save Next Version after it (%s)" % os.path.basename(after_that))
+    check([(v, Path(p).suffix) for v, p in fetch.list_versions(shared)]
+          == [(3, ".joscomp"), (4, ".nk"), (5, ".nk")],
+          "one history: v003.joscomp, v004.nk, v005.nk")
+
+    from BB_core import apps as core_apps
+    real_open_with = core_apps.open_with
+    started = []
+    try:
+        core_apps.open_with = lambda dcc, path: started.append(
+            (dcc, os.path.basename(str(path)))) or "JOSCompositor.exe"
+        scripts.open_in_jos(str(jos_file))
+    finally:
+        core_apps.open_with = real_open_with
+    check(started == [("jos", "sh05_v003.joscomp")],
+          "Open on a JOS version starts JOS Compositor on it (%s)" % started)
+    try:
+        scripts.open_in_jos(str(jos_file.with_name("sh05_v009.joscomp")))
+        refused = False
+    except scripts.ScriptError:
+        refused = True
+    check(refused, "a missing JOS project is refused")
+
+    owner_path, owner = workfiles.find_workfile(shared, "nuke", 3, shared_config)
+    check(owner == "jos" and owner_path == jos_file,
+          "render v003 maps back to the JOS project that made it")
+    from BB_core import master as core_master
+    flagged = core_master.set_master_scene(shared.at_version(3), owner,
+                                           shared_config)
+    check(flagged.name == "sh05_master.joscomp",
+          "flagging it master copies the .joscomp (%s)" % flagged.name)
+
     # -- the menu -------------------------------------------------------------
     check(package.MENU == "Kitsu", "the menu is called Kitsu")
     for name in ("open_browser", "save_next_version", "update_kitsu",

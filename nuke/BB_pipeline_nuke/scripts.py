@@ -3,6 +3,10 @@
 The same rule the Blender side follows: a version number is discovered once,
 by the core, from what is on disk - never typed in, never inferred twice - and
 the script that gets saved carries the context that named it.
+
+A task's JOS Compositor projects are part of the same history when the config
+says so (``shares_versions_with``): listed beside the scripts, counted when
+the next version is numbered, and opened in JOS, since Nuke cannot read them.
 '''
 import os
 import sys
@@ -52,6 +56,24 @@ def forget_our_edit():
 def current_path():
     name = _nuke().root().name()
     return '' if not name or name == 'Root' else name
+
+
+def is_jos(path):
+    '''True for a JOS Compositor project, which Nuke cannot open.'''
+    return str(path).lower().endswith('.joscomp')
+
+
+def open_in_jos(path):
+    '''Start JOS Compositor on a .joscomp version. Returns the path, or raises.'''
+    from BB_core import apps
+
+    if not os.path.isfile(str(path)):
+        raise ScriptError('File is gone: %s' % path)
+    try:
+        apps.open_with('jos', path)
+    except RuntimeError as error:
+        raise ScriptError(str(error))
+    return str(path)
 
 
 def open_elsewhere(path):

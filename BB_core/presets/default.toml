@@ -90,15 +90,24 @@ ext = "nk"
 scene_folder = "2DScene"
 render_folder = "2DRenders"
 departments = ["Compositing", "2D"]
+# One compositing history with JOS Compositor: the two count one version
+# sequence (sh01_v003.nk, then sh01_v004.joscomp), and each browser lists the
+# other's files beside its own. Either side naming the other shares it; clear
+# both lists to keep the two apart. A studio that comps only in Nuke has no
+# .joscomp files, so nothing changes for it.
+shares_versions_with = ["jos"]
 
 [dcc.jos]
 ext = "joscomp"
 scene_folder = "2DScene"
 render_folder = "2DRenders"
 # The same work as Nuke's, deliberately: JOS Compositor is a compositor too,
-# and a studio comps in one or the other (or both - each then shows the
-# task with its own projects under it, as Maya and Blender do for Modeling).
+# and a studio comps in one or the other, or both.
 departments = ["Compositing", "2D"]
+# Unlike Maya and Blender on Modeling, the two share one history: see
+# [dcc.nuke]. JOS opens a .nk version by
+# importing it (jos.import_nuke) and saves the result as the next version.
+shares_versions_with = ["nuke"]
 
 [dcc.maya]
 ext = "ma"

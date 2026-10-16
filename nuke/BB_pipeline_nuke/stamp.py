@@ -117,7 +117,7 @@ def _from_session(remembered, name):
     if remembered is None or not name:
         return None
 
-    from BB_core import naming, workfiles
+    from BB_core import versioning, workfiles
 
     from . import session
 
@@ -138,7 +138,7 @@ def _from_session(remembered, name):
 
     try:
         config = session.config_for(remembered)
-        version = naming.version_from_name(os.path.basename(str(name)), config)
+        version = versioning.version_from_name(os.path.basename(str(name)), config)
     except Exception:
         version = None
 

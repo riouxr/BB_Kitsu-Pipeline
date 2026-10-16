@@ -36,13 +36,17 @@ import blender_create
 import launcher_config
 import nuke_create
 import resolve_launch
-from BB_core import credentials, projects, settings, versioning, workfiles
+from BB_core import apps, credentials, projects, settings, versioning, workfiles
 from BB_core.context import EntityContext
 from BB_core.kitsu import KitsuClient, KitsuError, explain
 from BB_core.workfiles import RootNotConfigured
 
-# Which local setting names the executable for each dcc.
-_EXE_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe"}
+# Which local setting names the executable for each dcc. In this order when
+# two claim one department: Nuke before JOS for Compositing, which only
+# decides what *creates* a task's first version - an existing one opens in
+# the application its extension says (``workfile_dcc``).
+_EXE_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe",
+                "jos": "jos_exe"}
 
 _TASK_ID = re.compile(r"task_id=([0-9a-fA-F-]+)")
 
@@ -163,6 +167,11 @@ def dcc_for(context, config):
         "no DCC configured for department %r" % context.department)
 
 
+def executable(dcc):
+    """The executable configured for *dcc*, else where it installs by default."""
+    return launcher_config.get(_EXE_SETTING.get(dcc, ""), "") or apps.executable(dcc)
+
+
 def launch(dcc, exe, scene_path):
     if not exe:
         raise KitsuError(
@@ -183,8 +192,12 @@ def list_versions(context, config, dcc):
     # folder, and the task folder files sat in before it existed. Reading
     # the task folder alone found nothing once scenes moved into 3DScenes,
     # and Launch then offered to create a v001 over a task with eight.
-    found = workfiles.list_workfiles(context, dcc, config)
-    return sorted(found, reverse=True)
+    # With the versions of every application sharing this one's sequence
+    # (``shares_versions_with``: Nuke's .nk and JOS's .joscomp), so the
+    # latest comp opens whichever application saved it.
+    found = [(version, path) for version, path, _owner in
+             workfiles.list_shared_workfiles(context, dcc, config)]
+    return sorted(found, key=lambda item: item[0], reverse=True)
 
 
 def open_version(context, config, dcc, wanted_version=None):
@@ -195,7 +208,7 @@ def open_version(context, config, dcc, wanted_version=None):
     browser's Launch button by way of ``bb_launch_server.py`` - not just a
     developer reading a traceback.
     """
-    exe = launcher_config.get(_EXE_SETTING[dcc])
+    exe = executable(dcc)
 
     # Resolve has to be connected *before* asking it what versions exist -
     # listing versions means reading its own project database
@@ -267,7 +280,13 @@ def open_version(context, config, dcc, wanted_version=None):
         except RuntimeError as error:
             raise KitsuError(str(error))
     else:
-        launch(dcc, exe, identifier)
+        # The application the file belongs to, by its extension: a .joscomp
+        # in a task Nuke owns opens in JOS, and a .nk in JOS's in Nuke.
+        owner = workfiles.workfile_dcc(
+            identifier, config, workfiles.sharing_dccs(config, dcc)) or dcc
+        if owner != dcc:
+            exe = executable(owner)
+        launch(owner, exe, identifier)
 
     return version, identifier
 

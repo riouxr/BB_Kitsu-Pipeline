@@ -1084,7 +1084,7 @@ class TestSiblingModuleNames(unittest.TestCase):
     """
 
     PACKAGES = ("blender/BB_pipeline", "nuke/BB_pipeline_nuke",
-                "maya/BB_pipeline_maya")
+                "maya/BB_pipeline_maya", "jos/BB_pipeline_jos")
 
     def modules_in(self, package):
         return {path.stem: path for path in (REPO / package).glob("*.py")
@@ -1279,6 +1279,162 @@ class TestApplicationFolders(unittest.TestCase):
         self.assertEqual([stream for stream, *_rest in masters], ["playblast"])
         self.assertEqual(Path(masters[0][1]).parent.parts[-2:],
                          ("playblast", "Master"))
+
+
+class TestOneCompositingHistory(unittest.TestCase):
+    """Nuke and JOS Compositor count one version sequence per task.
+
+    ``shares_versions_with`` in the preset: sh01_v003.nk is followed by
+    sh01_v004.joscomp, whichever application saves next, and each lists
+    the other's files. Applications that share nothing are unaffected.
+    """
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        root = Path(self.folder.name)
+        self.config = Config().with_roots(work_root=root, render_root=root)
+        self.shot = sample_context(0)
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def put(self, dcc, version):
+        path = workfiles.work_file(self.shot, dcc, version, self.config)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+        return path
+
+    def test_the_preset_shares_nuke_and_jos_both_ways(self):
+        self.assertEqual(workfiles.sharing_dccs(self.config, "nuke"),
+                         ["nuke", "jos"])
+        self.assertEqual(workfiles.sharing_dccs(self.config, "jos"),
+                         ["jos", "nuke"])
+        self.assertEqual(workfiles.sharing_dccs(self.config, "blender"),
+                         ["blender"], "Blender shares with nobody")
+        self.assertEqual(workfiles.sharing_dccs(self.config, "maya"), ["maya"])
+
+    def test_one_side_naming_the_other_is_enough(self):
+        data = Config().data
+        data["dcc"]["nuke"]["shares_versions_with"] = []
+        config = Config(data)
+        self.assertEqual(workfiles.sharing_dccs(config, "nuke"), ["nuke", "jos"])
+        data["dcc"]["jos"]["shares_versions_with"] = []
+        config = Config(data)
+        self.assertEqual(workfiles.sharing_dccs(config, "nuke"), ["nuke"],
+                         "clearing both keeps them apart")
+
+    def test_both_scene_folders_are_the_same_2dscene(self):
+        self.assertEqual(workfiles.scene_dir(self.shot, "nuke", self.config),
+                         workfiles.scene_dir(self.shot, "jos", self.config))
+
+    def test_the_next_version_follows_the_other_application(self):
+        self.put("nuke", 1)
+        self.put("nuke", 3)
+        path, version = workfiles.next_workfile(self.shot, "jos", self.config)
+        self.assertEqual(version, 4)
+        self.assertEqual(path.name, "0070_v004.joscomp")
+
+        self.put("jos", 4)
+        path, version = workfiles.next_workfile(self.shot, "nuke", self.config)
+        self.assertEqual((version, path.name), (5, "0070_v005.nk"))
+
+    def test_each_lists_the_other_marked_by_owner(self):
+        self.put("nuke", 1)
+        self.put("jos", 2)
+        found = workfiles.list_shared_workfiles(self.shot, "jos", self.config)
+        self.assertEqual([(v, p.suffix, o) for v, p, o in found],
+                         [(1, ".nk", "nuke"), (2, ".joscomp", "jos")])
+        own = workfiles.list_workfiles(self.shot, "jos", self.config)
+        self.assertEqual([v for v, _p in own], [2],
+                         "list_workfiles stays one application's")
+
+    def test_a_number_used_twice_lists_both_own_first(self):
+        self.put("nuke", 2)
+        self.put("jos", 2)
+        found = workfiles.list_shared_workfiles(self.shot, "nuke", self.config)
+        self.assertEqual([o for _v, _p, o in found], ["nuke", "jos"])
+        self.assertEqual(
+            workfiles.next_workfile(self.shot, "jos", self.config)[1], 3)
+
+    def test_a_render_version_maps_to_its_scene_whatever_the_extension(self):
+        self.put("nuke", 1)
+        jos_file = self.put("jos", 2)
+        self.assertEqual(workfiles.find_workfile(self.shot, "nuke", 2, self.config),
+                         (jos_file, "jos"))
+        self.assertEqual(workfiles.find_workfile(self.shot, "nuke", 9, self.config),
+                         (None, ""))
+        # Both render into the one 2DRenders folder.
+        self.assertEqual(
+            workfiles.render_dir(self.shot.at_version(2), "main", self.config, "jos"),
+            workfiles.render_dir(self.shot.at_version(2), "main", self.config, "nuke"))
+
+    def test_the_extension_names_the_application(self):
+        self.assertEqual(workfiles.workfile_dcc("a/0070_v001.nk", self.config), "nuke")
+        self.assertEqual(workfiles.workfile_dcc("a/0070_v001.JOSCOMP", self.config), "jos")
+        self.assertEqual(workfiles.workfile_dcc("a/0070_v001.txt", self.config), "")
+
+    def test_a_studio_without_jos_files_sees_no_change(self):
+        self.put("nuke", 1)
+        self.assertEqual(
+            [(v, p) for v, p, _o in
+             workfiles.list_shared_workfiles(self.shot, "nuke", self.config)],
+            workfiles.list_workfiles(self.shot, "nuke", self.config))
+
+    def test_the_launcher_opens_the_latest_in_the_application_that_saved_it(self):
+        sys.path.insert(0, str(REPO / "launcher"))
+        try:
+            import bb_launch
+        except ImportError as error:        # requests missing, say
+            self.skipTest("launcher not importable here: %s" % error)
+
+        self.put("nuke", 1)
+        self.put("jos", 2)
+        launched = []
+        saved = bb_launch.launch, bb_launch.executable
+        bb_launch.launch = lambda dcc, exe, path: launched.append((dcc, exe, Path(path).suffix))
+        bb_launch.executable = lambda dcc: "%s.exe" % dcc
+        try:
+            listed = bb_launch.list_versions(self.shot, self.config, "nuke")
+            self.assertEqual([v for v, _p in listed], [2, 1])
+            bb_launch.open_version(self.shot, self.config, "nuke")
+            bb_launch.open_version(self.shot, self.config, "nuke", 1)
+            bb_launch.open_version(self.shot, self.config, "jos", 1)
+        finally:
+            bb_launch.launch, bb_launch.executable = saved
+        self.assertEqual(launched, [("jos", "jos.exe", ".joscomp"),
+                                    ("nuke", "nuke.exe", ".nk"),
+                                    ("nuke", "nuke.exe", ".nk")])
+
+    def test_jos_is_found_where_it_installs_or_where_told(self):
+        from BB_core import apps
+        fake = Path(self.folder.name) / "JOSCompositor.exe"
+        fake.write_bytes(b"")
+        saved = os.environ.get("JOS_COMPOSITOR_EXE")
+        os.environ["JOS_COMPOSITOR_EXE"] = str(fake)
+        try:
+            self.assertEqual(apps.executable("jos"), str(fake))
+        finally:
+            if saved is None:
+                os.environ.pop("JOS_COMPOSITOR_EXE", None)
+            else:
+                os.environ["JOS_COMPOSITOR_EXE"] = saved
+        self.assertIn(r"Jungle of Sharks\JOS Compositor\JOSCompositor.exe",
+                      apps.DEFAULT_PATHS["jos"][0])
+        self.assertEqual(apps.name("jos"), "JOS Compositor")
+
+    def test_jos_is_a_launchable_application(self):
+        sys.path.insert(0, str(REPO / "launcher"))
+        try:
+            import bb_launch
+            import dcc_versions
+        except ImportError as error:
+            self.skipTest("launcher not importable here: %s" % error)
+        self.assertIn("jos", bb_launch._EXE_SETTING)
+        self.assertIn("jos", dcc_versions._SETTING)
+        # Nuke still creates a compositing task's first version.
+        shot = sample_context(0)
+        shot.department = "Compositing"
+        self.assertEqual(bb_launch.dcc_for(shot, self.config), "nuke")
 
 
 class TestSavedKeysAreKept(unittest.TestCase):

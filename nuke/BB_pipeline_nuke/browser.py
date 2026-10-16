@@ -12,7 +12,7 @@ nothing left to say.
 '''
 import os
 
-from BB_core import credentials, settings, workfiles
+from BB_core import apps, credentials, settings, workfiles
 from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
 
 from . import (capture, fetch, publish, review, scripts, session, stamp,
@@ -418,18 +418,25 @@ class Browser(object):
         # read, whatever version it holds. It opens, and imports, like any
         # other row.
         self._rows = []
-        master_file = self._master_file(entity_context, config)
-        if master_file is not None:
-            item = QtWidgets.QListWidgetItem(
-                'Master    %s' % os.path.basename(str(master_file)))
-            self._decorate_master(item, entity_context, config, fallback)
+        for dcc, master_file in self._master_files(entity_context, config):
+            label = 'Master    %s' % os.path.basename(str(master_file))
+            if dcc != session.DCC:
+                label += '    [%s]' % apps.name(dcc)
+            item = QtWidgets.QListWidgetItem(label)
+            self._decorate_master(item, entity_context, config, fallback, dcc)
             self.versions.addItem(item)
             self._rows.append(master_file)
 
+        # The task's JOS Compositor projects are listed too when the config
+        # shares the version sequence with JOS: marked, since Nuke cannot
+        # open them and Open starts JOS on them instead.
         for version, path in reversed(found):
-            item = QtWidgets.QListWidgetItem(
-                'v%03d    %s' % (version, os.path.basename(str(path))))
-            self._decorate(item, entity_context, version, config, fallback)
+            label = 'v%03d    %s' % (version, os.path.basename(str(path)))
+            if scripts.is_jos(path):
+                label += '    [JOS Compositor - opens in JOS]'
+            item = QtWidgets.QListWidgetItem(label)
+            self._decorate(item, entity_context, version, config, fallback,
+                           workfiles.workfile_dcc(path, config) or session.DCC)
             self.versions.addItem(item)
             self._rows.append(path)
 
@@ -508,11 +515,13 @@ class Browser(object):
 
         self._enable_actions(bool(self._renders))
 
-    def _decorate(self, item, entity_context, version, config, fallback):
+    def _decorate(self, item, entity_context, version, config, fallback,
+                  dcc=None):
         picture = None
         try:
             picture = thumbnails.from_file(
-                workfiles.thumb_file(entity_context, 'nuke', version, config),
+                workfiles.thumb_file(entity_context, dcc or session.DCC,
+                                     version, config),
                 width=VERSION_ICON_WIDTH)
         except Exception:
             picture = None
@@ -539,19 +548,28 @@ class Browser(object):
             return ''
         return str(rows[row])
 
-    def _master_file(self, entity_context, config):
+    def _master_files(self, entity_context, config):
+        """``[(dcc, path)]``: the task's master, and the master of every
+        application sharing its versions (a Nuke master beside a JOS one)."""
         from BB_core import master
-        try:
-            return master.master_scene(entity_context, session.DCC, config)
-        except Exception:
-            return None
+        found = []
+        for dcc in workfiles.sharing_dccs(config, session.DCC):
+            try:
+                made = master.master_scene(entity_context, dcc, config)
+            except Exception:
+                made = None
+            if made is not None:
+                found.append((dcc, made))
+        return found
 
-    def _decorate_master(self, item, entity_context, config, fallback):
+    def _decorate_master(self, item, entity_context, config, fallback,
+                         dcc=None):
         from BB_core import master
         picture = None
         try:
             picture = thumbnails.from_file(
-                master.master_thumb_file(entity_context, session.DCC, config),
+                master.master_thumb_file(entity_context, dcc or session.DCC,
+                                         config),
                 width=VERSION_ICON_WIDTH)
         except Exception:
             picture = None
@@ -565,6 +583,10 @@ class Browser(object):
         path = self._selected_path()
         if not path:
             self._say('No version selected', error=True)
+            return
+
+        if scripts.is_jos(path):
+            self._open_in_jos(path)
             return
 
         # Always asked, never a setting. Which answer is right changes from
@@ -599,6 +621,22 @@ class Browser(object):
         if opened:
             self._say('opened %s' % os.path.basename(opened))
             self.dialog.accept()
+
+    def _open_in_jos(self, path):
+        '''A JOS Compositor version: Nuke cannot open it, JOS can.'''
+        import nuke
+
+        if not nuke.ask('%s is a JOS Compositor project, which Nuke cannot '
+                        'open.%sOpen it in JOS Compositor?'
+                        % (os.path.basename(path), chr(10) * 2)):
+            return
+        try:
+            scripts.open_in_jos(path)
+        except scripts.ScriptError as error:
+            self._say(str(error), error=True)
+            return
+        self._say('opening %s in JOS Compositor' % os.path.basename(path))
+        self.dialog.accept()
 
     def _ask_where(self, path):
         """'here', 'new' or '' - only asked when the setting says to."""
@@ -669,6 +707,11 @@ class Browser(object):
         path = self._selected_path()
         if not path:
             self._say('No version selected', error=True)
+            return
+        if scripts.is_jos(path):
+            self._say('%s is a JOS Compositor project: Nuke cannot import '
+                      'it. Open it in JOS instead.' % os.path.basename(path),
+                      error=True)
             return
         try:
             scripts.import_into_current(path)

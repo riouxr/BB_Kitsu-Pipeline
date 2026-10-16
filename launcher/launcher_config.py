@@ -20,6 +20,9 @@ DEFAULTS = {
     "blender_exe": "",
     "nuke_exe": "",
     "resolve_exe": "",
+    # JOS Compositor. Blank falls back to where its installer puts it
+    # (BB_core/apps.py), so a default install needs no setting.
+    "jos_exe": "",
     # A dedicated Kitsu account for bb_launch_server.py, distinct from the
     # artist's own login in BB_core/settings.json. Kitsu appears to allow
     # only one active session per person - authenticating as the artist's

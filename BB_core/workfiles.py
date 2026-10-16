@@ -167,6 +167,79 @@ def list_workfiles(context, dcc, config=None):
     return sorted(found, key=lambda item: item[0])
 
 
+# ── Applications doing the same work ─────────────────────────────────────────
+#
+# Nuke and JOS Compositor are both compositors, and a shot's comp can move from
+# one to the other. ``shares_versions_with`` under ``[dcc.<name>]`` says so,
+# and then the two count one version sequence between them: sh01_v003.nk is
+# followed by sh01_v004.joscomp, never by a second v003. Either side naming
+# the other is enough - one sequence cannot be shared in one direction only,
+# or the side that did not look would hand the same number out again.
+
+def sharing_dccs(config, dcc):
+    """*dcc* first, then every application sharing its version sequence."""
+    config = config or Config()
+    every = config.dccs()
+    mine = {str(name) for name in
+            ((every.get(dcc) or {}).get("shares_versions_with") or [])}
+    found = [dcc]
+    for name in sorted(every):
+        settings = every[name]
+        if name == dcc or not isinstance(settings, dict) or not settings.get("ext"):
+            continue
+        theirs = {str(other) for other in (settings.get("shares_versions_with") or [])}
+        if name in mine or dcc in theirs:
+            found.append(name)
+    return found
+
+
+def workfile_dcc(path, config=None, among=None):
+    """The application a work file belongs to, from its extension, or ''.
+
+    *among* limits the answer to those applications (a sharing group), so
+    an extension two unrelated applications both use cannot be misread.
+    """
+    config = config or Config()
+    suffix = Path(str(path)).suffix.lstrip(".").lower()
+    if not suffix:
+        return ""
+    names = list(among) if among else sorted(config.dccs())
+    for name in names:
+        if str(config.dcc(name).get("ext") or "").lower() == suffix:
+            return name
+    return ""
+
+
+def list_shared_workfiles(context, dcc, config=None):
+    """Every version of this task's work in *dcc* and the applications
+    sharing its versions, as ``(version, Path, owner)``, oldest first.
+
+    For a studio where nothing is shared this is ``list_workfiles`` with the
+    application's name added. When two files carry one number (written
+    before the sequence was shared), both are listed, *dcc*'s own first.
+    """
+    config = config or Config()
+    group = sharing_dccs(config, dcc)
+    found = []
+    for name in group:
+        for version, path in list_workfiles(context, name, config):
+            found.append((version, path, name))
+    return sorted(found, key=lambda item: (item[0], group.index(item[2])))
+
+
+def find_workfile(context, dcc, version=None, config=None):
+    """``(Path, owner)`` for one version of the shared work, or ``(None, '')``.
+
+    What maps a render's version back to the scene that made it, whichever
+    application that was: the comp's renders share one 2DRenders folder.
+    """
+    version = context.version if version is None else version
+    for found, path, owner in list_shared_workfiles(context, dcc, config):
+        if found == version:
+            return path, owner
+    return None, ""
+
+
 # The folder holding one small image per work version. A dot-folder beside
 # the scene files rather than a parallel tree: it moves with the work when a
 # shot is relocated, and sync tools already skip dot-folders by default.
@@ -219,9 +292,11 @@ def next_workfile(context, dcc, config=None):
     """``(Path, version)`` for the next scene file to create.
 
     Returns v001 for a shot with nothing on disk, so "open" and "create new"
-    are the same code path with a different starting point.
+    are the same code path with a different starting point. Counts the
+    versions of every application sharing *dcc*'s sequence (``sharing_dccs``),
+    so a JOS project saved after sh01_v003.nk is v004.
     """
-    found = list_workfiles(context, dcc, config)
+    found = list_shared_workfiles(context, dcc, config)
     # One past the highest wherever it sits - old task folder or new scene
     # folder - never a count, so deleting v002 cannot hand out v003 twice.
     version = (found[-1][0] + 1) if found else 1

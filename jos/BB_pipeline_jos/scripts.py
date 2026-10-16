@@ -4,6 +4,11 @@ The Nuke side's rules, through the ``jos`` module: a version number is
 discovered once, by the core, from what is on disk - never typed in, never
 inferred twice - and the project that gets saved carries the context that
 named it.
+
+A task's Nuke scripts are part of the same history when the config says so
+(``shares_versions_with``): they are listed, opened by importing them into a
+new project (``open_nuke``), and the next version saved after one carries on
+from its number. A .nk is only ever read, never written.
 '''
 import os
 
@@ -42,6 +47,11 @@ def forget_our_edit():
 
 def current_path():
     return _jos().project_path()
+
+
+def is_nuke(path):
+    '''True for a Nuke script, which JOS imports rather than opens.'''
+    return str(path).lower().endswith('.nk')
 
 
 def open_elsewhere(path):
@@ -83,6 +93,8 @@ def open_version(path, known=None):
 
     if not os.path.isfile(path):
         raise ScriptError('File is gone: %s' % path)
+    if is_nuke(path):
+        return path if open_nuke(path, known) is not None else ''
 
     forget_our_edit()
     if not jos.open(str(path)):
@@ -92,10 +104,65 @@ def open_version(path, known=None):
     return path
 
 
-def import_into_current(path):
-    """Paste another version's nodes into the open project (Nuke's nodePaste)."""
+def open_nuke(path, known=None):
+    """Import a Nuke version into a new project. ``(names, warnings)``, or None.
+
+    The new project is unsaved: the .nk is never written to. It carries the
+    Kitsu context - the stamp Nuke saved in the script, else the one the
+    browser opened it from, at the script's version - so Save Next Version
+    makes the task's next version as a .joscomp. None when the artist
+    cancelled replacing the open project.
+    """
+    jos = _jos()
+
     if not os.path.isfile(path):
         raise ScriptError('File is gone: %s' % path)
+
+    forget_our_edit()
+    if not jos.new():
+        return None
+    try:
+        names, warnings = jos.import_nuke(str(path))
+    except Exception as error:
+        raise ScriptError('Could not import %s: %s'
+                          % (os.path.basename(str(path)), error))
+
+    entity_context = stamp.read_nuke_script(path)
+    if entity_context is None and known is not None:
+        version = _version_of(path, known)
+        entity_context = known.at_version(version) if version else known
+    if entity_context is not None:
+        stamp.write(entity_context)
+        from . import writenode
+        writenode.adopt(entity_context)
+    state.context = entity_context
+    return list(names), list(warnings)
+
+
+def _version_of(path, entity_context):
+    from BB_core import versioning
+    try:
+        config = session.config_for(entity_context)
+    except Exception:
+        config = None
+    try:
+        return versioning.version_from_name(os.path.basename(str(path)), config)
+    except Exception:
+        return None
+
+
+def import_into_current(path):
+    """Paste another version's nodes into the open project (Nuke's nodePaste).
+
+    A Nuke version is imported the same way, as JOS nodes.
+    """
+    if not os.path.isfile(path):
+        raise ScriptError('File is gone: %s' % path)
+    if is_nuke(path):
+        _jos().import_nuke(str(path))
+        from . import writenode
+        writenode.adopt(stamp.read())
+        return path
     _jos().import_project(str(path))
     return path
 
@@ -191,12 +258,15 @@ def read_sequence(pattern, first, last):
 
 
 def upcoming_version():
-    '''``(path, version)`` the next Save Next Version would write, or raises.'''
-    if not current_path():
-        raise ScriptError('Save this project once before versioning it')
+    '''``(path, version)`` the next Save Next Version would write, or raises.
 
+    A project never saved can still version up when it carries a Kitsu
+    context: that is a Nuke version just imported (``open_nuke``).
+    '''
     entity_context, _stamped_from = stamp.read_current()
     if entity_context is None:
+        if not current_path():
+            raise ScriptError('Save this project once before versioning it')
         raise ScriptError('No Kitsu context on this project')
 
     try:
