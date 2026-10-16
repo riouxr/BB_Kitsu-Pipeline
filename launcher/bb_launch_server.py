@@ -167,7 +167,8 @@ def _handle_launch(query):
     wanted_version = int(version) if version else None
 
     context, config, dcc = _resolve(task_id)
-    version, identifier = bb_launch.open_version(context, config, dcc, wanted_version)
+    version, identifier = bb_launch.open_version(context, config, dcc, wanted_version,
+                                                 _get_client())
     return 200, {"message": "opening %s in %s" % (identifier, dcc)}
 
 

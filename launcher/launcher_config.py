@@ -23,6 +23,10 @@ DEFAULTS = {
     # JOS Compositor. Blank falls back to where its installer puts it
     # (BB_core/apps.py), so a default install needs no setting.
     "jos_exe": "",
+    # Which compositor creates a compositing task's first version on Launch
+    # when Nuke and JOS both claim the department: "nuke" (the default) or
+    # "jos". Existing versions open in whichever application saved them.
+    "compositing_app": "nuke",
     # A dedicated Kitsu account for bb_launch_server.py, distinct from the
     # artist's own login in BB_core/settings.json. Kitsu appears to allow
     # only one active session per person - authenticating as the artist's

@@ -982,7 +982,11 @@ in the task's `2DScene` folder and render into `2DRenders`.
   (`workfiles.find_workfile`), so a JOS version's master is
   `sh01_master.joscomp`.
 - **Launch** opens the task's latest version in the application its extension
-  names (see `launcher/README.md`).
+  names. On an empty compositing task it creates v001 in Nuke, or in JOS when
+  the launcher's `compositing_app` setting says `"jos"` (or Nuke no longer
+  claims Compositing): `launcher/jos_create.py` runs the plugin's Create in
+  `jos-python`, adds a Kitsu Write, then opens the file in JOS (see
+  `launcher/README.md`).
 
 Either side naming the other is enough to share the sequence, so a one-sided
 sequence can't hand a number out twice. Clear both lists to keep the two

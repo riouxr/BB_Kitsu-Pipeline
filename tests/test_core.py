@@ -1437,6 +1437,138 @@ class TestOneCompositingHistory(unittest.TestCase):
         self.assertEqual(bb_launch.dcc_for(shot, self.config), "nuke")
 
 
+class TestJosCreatesTheFirstComp(unittest.TestCase):
+    """Launch on an empty compositing task: who creates v001, and JOS's way.
+
+    ``compositing_app`` in the launcher's settings picks Nuke (the default)
+    or JOS when both claim Compositing; a studio that took Compositing off
+    Nuke's list gets JOS. JOS creates v001 in jos-python (jos_create.py),
+    then Launch opens it in JOS.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "launcher"))
+        try:
+            import bb_launch
+            import jos_create
+            import launcher_config
+        except ImportError as error:
+            self.skipTest("launcher not importable here: %s" % error)
+        self.bb_launch, self.jos_create = bb_launch, jos_create
+        self.launcher_config = launcher_config
+        self.folder = tempfile.TemporaryDirectory()
+        root = Path(self.folder.name)
+        self.saved_file = launcher_config.FILE
+        launcher_config.FILE = root / "launcher.json"
+        self.config = Config().with_roots(work_root=root / "work",
+                                          render_root=root / "renders")
+        self.comp = EntityContext(
+            entity_type="shot", project="PizzaHunt", group="sc01",
+            entity="sh01", task="Compositing", department="Compositing",
+            project_id="p1", group_id="s1", entity_id="sh1", task_id="t2",
+            task_type_id="tt2", version=0, server="http://kitsu.test")
+
+    def tearDown(self):
+        self.launcher_config.FILE = self.saved_file
+        self.folder.cleanup()
+
+    def test_nuke_creates_by_default(self):
+        self.assertEqual(self.bb_launch.dcc_for(self.comp, self.config), "nuke")
+
+    def test_the_setting_picks_jos(self):
+        self.launcher_config.set("compositing_app", "jos")
+        self.assertEqual(self.bb_launch.dcc_for(self.comp, self.config), "jos")
+        lighting = self.comp.at_version(0)
+        lighting.department = "Lighting"
+        self.assertEqual(self.bb_launch.dcc_for(lighting, self.config),
+                         "blender", "only between applications sharing work")
+
+    def test_a_jos_only_studio_gets_jos(self):
+        data = self.config.data
+        data["dcc"]["nuke"]["departments"] = ["Roto"]
+        self.assertEqual(self.bb_launch.dcc_for(self.comp, Config(data)), "jos")
+
+    def test_launch_creates_v001_in_jos_then_opens_it(self):
+        made, launched = [], []
+
+        class Client:
+            def shot(self, shot_id):
+                return {"id": shot_id, "data": {"frame_in": 1001, "frame_out": 1100}}
+
+            def project(self, project_id):
+                return {"id": project_id, "name": "PizzaHunt", "fps": "25"}
+
+        def create(exe, context, path, shot=None, project=None):
+            made.append((exe, context.version, Path(path).name,
+                         shot.get("data"), project.get("fps")))
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text("{}", encoding="utf-8")
+
+        saved = (self.jos_create.create, self.bb_launch.launch,
+                 self.bb_launch.executable)
+        self.jos_create.create = create
+        self.bb_launch.launch = lambda dcc, exe, path: launched.append(
+            (dcc, Path(path).name))
+        self.bb_launch.executable = lambda dcc: "%s.exe" % dcc
+        try:
+            version, path = self.bb_launch.open_version(
+                self.comp, self.config, "jos", client=Client())
+        finally:
+            (self.jos_create.create, self.bb_launch.launch,
+             self.bb_launch.executable) = saved
+        self.assertEqual(made, [("jos.exe", 1, "sh01_v001.joscomp",
+                                 {"frame_in": 1001, "frame_out": 1100}, "25")])
+        self.assertEqual(launched, [("jos", "sh01_v001.joscomp")])
+        self.assertEqual(version, 1)
+
+    def test_jos_python_is_found_beside_the_app(self):
+        exe = Path(self.folder.name) / "JOSCompositor.exe"
+        exe.write_bytes(b"")
+        self.assertEqual(self.jos_create.interpreter(str(exe)), "")
+        (exe.parent / "jos-python.exe").write_bytes(b"")
+        self.assertEqual(self.jos_create.interpreter(str(exe)),
+                         str(exe.parent / "jos-python.exe"))
+        with self.assertRaises(RuntimeError):
+            self.jos_create.create(str(Path(self.folder.name) / "none.exe"),
+                                   self.comp.at_version(1), "x.joscomp")
+
+    def test_the_real_jos_python_creates_v001(self):
+        from BB_core import apps
+        exe = apps.executable("jos")
+        if not self.jos_create.interpreter(exe):
+            self.skipTest("JOS Compositor is not installed here")
+        import json
+        root = Path(self.folder.name)
+        settings_file = root / "settings.json"
+        settings_file.write_text(json.dumps(
+            {"work_root": str(root / "work"),
+             "render_root": str(root / "renders")}), encoding="utf-8")
+        saved = os.environ.get("BB_PIPELINE_SETTINGS")
+        os.environ["BB_PIPELINE_SETTINGS"] = str(settings_file)
+        try:
+            path = workfiles.work_file(self.comp, "jos", 1, self.config)
+            self.jos_create.create(
+                exe, self.comp.at_version(1), path,
+                {"id": "sh1", "name": "sh01",
+                 "data": {"frame_in": 1001, "frame_out": 1100}},
+                {"id": "p1", "name": "PizzaHunt", "fps": "25"})
+        finally:
+            if saved is None:
+                os.environ.pop("BB_PIPELINE_SETTINGS", None)
+            else:
+                os.environ["BB_PIPELINE_SETTINGS"] = saved
+        self.assertTrue(path.is_file(), path)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("BB_pipeline", text, "stamped")
+        self.assertIn('\\"task_id\\": \\"t2\\"', text)
+        project = json.loads(text)
+        self.assertIn("KitsuWrite1", [n["name"] for n in project["nodes"]])
+        write = next(n for n in project["nodes"] if n["name"] == "KitsuWrite1")
+        self.assertIn("2DRenders", write["params"]["file"])
+        self.assertIn("_v001.", write["params"]["file"])
+        self.assertIn("1100", text)
+
+
 class TestSavedKeysAreKept(unittest.TestCase):
     """A key a host writes to the settings file has to be one the file keeps.
 

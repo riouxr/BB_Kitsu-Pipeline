@@ -8,6 +8,7 @@ the DCC does the opening, out of however many are installed side by side.
     python dcc_versions.py list blender      # just one dcc
     python dcc_versions.py set blender 5.1   # match by a substring of the path
     python dcc_versions.py current           # what bb_launch.py will use right now
+    python dcc_versions.py compositing jos   # JOS creates new comps (default nuke)
 
 Search paths are Windows-only and cover where these install by default;
 nothing here touches the registry or asks Windows what is installed, so an
@@ -108,7 +109,21 @@ def cmd_set(argv):
     return 0
 
 
-COMMANDS = {"list": cmd_list, "current": cmd_current, "set": cmd_set}
+def cmd_compositing(argv):
+    """Which compositor creates a compositing task's first version on Launch."""
+    if not argv:
+        print("compositing: %s" % launcher_config.get("compositing_app", "nuke"))
+        return 0
+    if argv[0] not in ("nuke", "jos"):
+        print("usage: dcc_versions.py compositing <nuke|jos>")
+        return 1
+    launcher_config.set("compositing_app", argv[0])
+    print("compositing -> %s" % argv[0])
+    return 0
+
+
+COMMANDS = {"list": cmd_list, "current": cmd_current, "set": cmd_set,
+            "compositing": cmd_compositing}
 
 
 def main(argv):

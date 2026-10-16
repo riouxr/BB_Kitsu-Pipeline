@@ -125,9 +125,15 @@ on disk (`BB_core.workfiles`/`versioning`), and opening it is
 `open_version()` starts the application the chosen file's extension names
 (`workfiles.workfile_dcc`): a `.joscomp` opens in JOS, a `.nk` in Nuke,
 whichever of the two the department matched. When both claim a department,
-Nuke comes first in `_EXE_SETTING`, which only decides who creates a task's
-first version. JOS has no create-on-Launch step yet, so a JOS-only studio
-gets "create one from jos first" on an empty task. JOS's executable is the
+the `compositing_app` launcher setting decides who creates a task's first
+version: `"nuke"` by default (Nuke first in `_EXE_SETTING`, as before), or
+`"jos"` (`python dcc_versions.py compositing jos`). A studio that takes
+Compositing off Nuke's list gets JOS whatever the setting says. JOS creates
+v001 the way Blender does, in a throwaway headless process: `jos_create.py`
+runs `jos_create_bg.py` in the `jos-python.exe` next to `JOSCompositor.exe`,
+which calls the plugin's own Create (stamp, Kitsu frame range and fps, save)
+and adds a Kitsu Write. The shot and project come along from Kitsu, for the
+frame range, fps and roots. Then Launch opens the new file in JOS. JOS's executable is the
 `jos_exe` setting, else `C:\Program Files\Jungle of Sharks\JOS
 Compositor\JOSCompositor.exe` (`BB_core/apps.py`). Set Master copies
 whichever application's file holds that version.

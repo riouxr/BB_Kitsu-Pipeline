@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import blender_create
+import jos_create
 import launcher_config
 import nuke_create
 import resolve_launch
@@ -42,9 +43,10 @@ from BB_core.kitsu import KitsuClient, KitsuError, explain
 from BB_core.workfiles import RootNotConfigured
 
 # Which local setting names the executable for each dcc. In this order when
-# two claim one department: Nuke before JOS for Compositing, which only
-# decides what *creates* a task's first version - an existing one opens in
-# the application its extension says (``workfile_dcc``).
+# two claim one department and nothing says otherwise: Nuke before JOS for
+# Compositing (the ``compositing_app`` launcher setting can pick JOS). That
+# only decides what *creates* a task's first version - an existing one opens
+# in the application its extension says (``workfile_dcc``).
 _EXE_SETTING = {"blender": "blender_exe", "nuke": "nuke_exe", "resolve": "resolve_exe",
                 "jos": "jos_exe"}
 
@@ -156,15 +158,30 @@ def resolve_context(client, task_id):
     )
 
 
-def dcc_for(context, config):
-    """Which DCC owns this task's department, per ``[dcc.*]`` in the config."""
+def dcc_for(context, config, preferred=None):
+    """Which DCC owns this task's department, per ``[dcc.*]`` in the config.
+
+    When applications sharing one version sequence both claim it - Nuke and
+    JOS on Compositing - the ``compositing_app`` launcher setting picks
+    (*preferred* overrides it), else the first in ``_EXE_SETTING``: Nuke.
+    A studio that took Compositing off Nuke's list gets JOS either way.
+    """
     department = (context.department or "").lower()
+    matches = []
     for name in _EXE_SETTING:
         departments = config.dcc(name).get("departments")
         if departments and department in {d.lower() for d in departments}:
-            return name
-    raise KitsuError(
-        "no DCC configured for department %r" % context.department)
+            matches.append(name)
+    if not matches:
+        raise KitsuError(
+            "no DCC configured for department %r" % context.department)
+
+    if preferred is None:
+        preferred = launcher_config.get("compositing_app", "")
+    if (preferred in matches
+            and matches[0] in workfiles.sharing_dccs(config, preferred)):
+        return preferred
+    return matches[0]
 
 
 def executable(dcc):
@@ -200,7 +217,7 @@ def list_versions(context, config, dcc):
     return sorted(found, key=lambda item: item[0], reverse=True)
 
 
-def open_version(context, config, dcc, wanted_version=None):
+def open_version(context, config, dcc, wanted_version=None, client=None):
     """Opens *wanted_version* of this task in *dcc*, or the latest.
 
     Returns ``(version, identifier)``. Raises :class:`KitsuError` with a
@@ -256,6 +273,20 @@ def open_version(context, config, dcc, wanted_version=None):
         except RuntimeError as error:
             raise KitsuError(str(error))
         return version, path
+    elif not versions and dcc == "jos":
+        # JOS has a headless interpreter, so this goes Blender's way: create
+        # v001 in a throwaway jos-python (the plugin's own Create, then a
+        # Kitsu Write - jos_create_bg.py), then open it below. The shot and
+        # project go along, for the frame range, fps and roots a browser
+        # would have had cached; *client* fetches them when given.
+        path, version = workfiles.next_workfile(context, dcc, config)
+        shot, project = _kitsu_records(client, context)
+        try:
+            jos_create.create(exe, context.at_version(version), path,
+                              shot, project)
+        except RuntimeError as error:
+            raise KitsuError(str(error))
+        match = (version, path)
     elif not versions and dcc == "resolve":
         # Resolve's `CreateProject` both creates and loads the project as
         # Resolve's current one, so - like Nuke just above - there is
@@ -291,6 +322,22 @@ def open_version(context, config, dcc, wanted_version=None):
     return version, identifier
 
 
+def _kitsu_records(client, context):
+    """``(shot, project)`` dicts from Kitsu, or empty ones without a client."""
+    if client is None:
+        return {}, {}
+    try:
+        shot = (client.shot(context.entity_id)
+                if context.entity_type == "shot" else client.asset(context.entity_id))
+    except KitsuError:
+        shot = None
+    try:
+        project = client.project(context.project_id)
+    except KitsuError:
+        project = None
+    return shot or {}, project or {}
+
+
 def main(argv):
     if len(argv) < 2:
         print("usage: bb_launch.py <task_id or bbopen:// url>")
@@ -319,7 +366,8 @@ def main(argv):
         config = fresh_config(client, context.project_id)
         dcc = dcc_for(context, config)
 
-        version, identifier = open_version(context, config, dcc, wanted_version)
+        version, identifier = open_version(context, config, dcc, wanted_version,
+                                           client)
         print("opening %s in %s (v%03d)" % (identifier, dcc, version))
         return 0
     except KitsuError as error:
