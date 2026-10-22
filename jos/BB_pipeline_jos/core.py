@@ -2,7 +2,9 @@
 
 Same problem the Blender add-on has and the same two answers: a development
 checkout, where this package sits at <repo>/jos/BB_pipeline_jos and the
-core is at <repo>/BB_core, or an installed copy with BB_core beside it.
+core is at <repo>/BB_core, or an installed copy with BB_core beside it (the
+plugin folder JOS's installer and the downloadable zip lay out:
+<plugin>/BB_pipeline_jos and <plugin>/BB_core), or inside it.
 
 Nothing here imports jos, so it can be exercised by a plain interpreter.
 '''
@@ -19,6 +21,7 @@ def _candidates():
     # Development checkout first: when both exist, the working copy is the one
     # being edited and is what the developer expects to be running.
     yield os.path.abspath(os.path.join(HERE, '..', '..'))
+    yield os.path.abspath(os.path.join(HERE, '..'))
     yield HERE
 
 

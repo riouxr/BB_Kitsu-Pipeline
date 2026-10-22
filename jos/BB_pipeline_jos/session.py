@@ -82,9 +82,17 @@ class Session:
         the task still belongs in the tree.
         '''
         allowed = self.task_departments
-        if allowed is None:
+        if allowed is None or not self._departments_known(allowed):
+            # A studio whose departments have other names than the
+            # configured ones ([dcc.jos] departments): every task is JOS's
+            # rather than none.
             return True
         return self.department_of(task.get('task_type_id', '')).lower() in allowed
+
+    def _departments_known(self, allowed):
+        """True when one of the configured departments exists on the server."""
+        names = {(d or {}).get('name', '').lower() for d in self.departments.values()}
+        return bool(names & set(allowed))
 
     def browsable_tasks(self):
         '''Every task on the shot, authored here or not.

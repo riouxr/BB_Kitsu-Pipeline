@@ -12,6 +12,7 @@ lighting or FX task, so the department column Prism spends space on has
 nothing left to say.
 '''
 import os
+import sys
 
 from BB_core import apps, credentials, settings, workfiles
 from BB_core.kitsu import AuthError, KitsuClient, KitsuError, explain
@@ -1072,9 +1073,11 @@ def show_settings():
 
     layout.addLayout(form)
 
+    store = {'win32': 'the Windows Credential Manager',
+             'darwin': 'the macOS Keychain'}.get(sys.platform, 'the system keyring')
     note = QtWidgets.QLabel(
-        'The password goes to the Windows Credential Manager, never to this '
-        'file - the same store Blender and the standalone tools use.')
+        'The password goes to %s, never to this file - the same store '
+        'Blender and the standalone tools use.' % store)
     note.setWordWrap(True)
     layout.addWidget(note)
 
